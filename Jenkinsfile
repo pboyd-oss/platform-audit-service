@@ -49,7 +49,7 @@ pipeline {
                 script {
                     env.IMAGE_DIGEST = readFile("${WORKSPACE}/image.digest").trim()
                     writeJSON file: 'artifacts.json', json: [
-                        builds: [[tag: "${env.IMAGE}@${env.IMAGE_DIGEST}", number: env.BUILD_NUMBER]]
+                        builds: [[imageName: env.IMAGE, tag: "${env.IMAGE}@${env.IMAGE_DIGEST}", number: env.BUILD_NUMBER]]
                     ]
                     archiveArtifacts artifacts: 'artifacts.json', fingerprint: true
                 }
@@ -76,6 +76,19 @@ pipeline {
                             cosign sign --key /tmp/cosign.key --yes \
                                 "${IMAGE}@${IMAGE_DIGEST}"
                             rm -f /tmp/cosign.key ~/.docker/config.json
+                        '''
+                    }
+                }
+            }
+        }
+
+        stage('Deploy') {
+            steps {
+                container('build-sec-base') {
+                    withCredentials([file(credentialsId: 'kubeconfig-kubernetes', variable: 'KUBECONFIG')]) {
+                        sh '''
+                            skaffold render --build-artifacts=artifacts.json --output=rendered.yaml
+                            skaffold apply rendered.yaml
                         '''
                     }
                 }
