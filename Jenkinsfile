@@ -2,7 +2,7 @@ pipeline {
     agent {
         kubernetes {
             cloud 'kubernetes'
-            label 'platform-builder'
+            inheritFrom 'platform-builder'
         }
     }
 
