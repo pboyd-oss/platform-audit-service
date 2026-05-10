@@ -152,14 +152,39 @@ func handleBuildSummary(w http.ResponseWriter, r *http.Request) {
 
 // --- Correlation ----------------------------------------------------------------
 
+type libraryRef struct {
+	Source   string `json:"source,omitempty"`  // "library" or "pipeline"
+	Library  string `json:"library,omitempty"`
+	Version  string `json:"version,omitempty"`
+	StepName string `json:"stepName,omitempty"`
+}
+
 type stepEvent struct {
-	Event        string `json:"event"`
-	NodeId       string `json:"nodeId"`
-	StartNodeId  string `json:"startNodeId"`
-	StepName     string `json:"stepName"`
-	FunctionName string `json:"functionName"`
-	TS           int64  `json:"ts"`
-	Result       string `json:"result"`
+	Event         string      `json:"event"`
+	NodeId        string      `json:"nodeId"`
+	StartNodeId   string      `json:"startNodeId"`
+	StepName      string      `json:"stepName"`
+	FunctionName  string      `json:"functionName"`
+	TS            int64       `json:"ts"`
+	Result        string      `json:"result"`
+	DurationMs    *int64      `json:"durationMs,omitempty"`
+	EnclosingIds  []string    `json:"enclosingIds,omitempty"`
+	LibrarySource *libraryRef `json:"librarySource,omitempty"`
+	CalledFrom    *libraryRef `json:"calledFrom,omitempty"`
+}
+
+// stepNode is one node in the reconstructed call tree.
+type stepNode struct {
+	NodeId       string      `json:"nodeId"`
+	StepName     string      `json:"stepName"`
+	FunctionName string      `json:"functionName,omitempty"`
+	StartTS      int64       `json:"startTs"`
+	EndTS        int64       `json:"endTs,omitempty"`
+	DurationMs   *int64      `json:"durationMs,omitempty"`
+	Result       string      `json:"result,omitempty"`
+	Library      *libraryRef `json:"library,omitempty"`
+	CalledFrom   *libraryRef `json:"calledFrom,omitempty"`
+	Children     []*stepNode `json:"children,omitempty"`
 }
 
 type tetragonEvent struct {
@@ -186,6 +211,7 @@ type correlationReport struct {
 	TotalSteps      int              `json:"total_steps"`
 	TotalExecs      int              `json:"total_execs"`
 	AnomalyCount    int              `json:"anomaly_count"`
+	StepTree        []*stepNode      `json:"step_tree"`
 	CorrelatedExecs []correlatedExec `json:"correlated_execs"`
 }
 
@@ -276,6 +302,7 @@ func correlate(auditId string) {
 		TotalSteps:      len(windows),
 		TotalExecs:      len(tetEvents),
 		AnomalyCount:    len(anomalies),
+		StepTree:        buildStepTree(steps),
 		CorrelatedExecs: correlated,
 	}
 
@@ -286,6 +313,91 @@ func correlate(auditId string) {
 
 	log.Printf("correlation complete %s: steps=%d execs=%d anomalies=%d",
 		auditId, report.TotalSteps, report.TotalExecs, report.AnomalyCount)
+}
+
+// --- Step tree ------------------------------------------------------------------
+
+// buildStepTree reconstructs the call hierarchy from the flat list of step
+// events emitted by the graph listener. It uses enclosingIds to nest children
+// under their nearest enclosing step. Steps emitted by library functions are
+// attributed via librarySource / calledFrom that the listener already injected.
+func buildStepTree(steps []stepEvent) []*stepNode {
+	nodesByStart := make(map[string]*stepNode)
+
+	// First pass: create a node for every STEP_START.
+	for _, s := range steps {
+		if s.Event != "STEP_START" {
+			continue
+		}
+		n := &stepNode{
+			NodeId:       s.NodeId,
+			StepName:     s.StepName,
+			FunctionName: s.FunctionName,
+			StartTS:      s.TS,
+			Library:      s.LibrarySource,
+			CalledFrom:   s.CalledFrom,
+		}
+		nodesByStart[s.NodeId] = n
+	}
+
+	// Second pass: apply STEP_END data (duration, result).
+	for _, s := range steps {
+		if s.Event != "STEP_END" || s.StartNodeId == "" {
+			continue
+		}
+		if n, ok := nodesByStart[s.StartNodeId]; ok {
+			n.EndTS = s.TS
+			n.Result = s.Result
+			if s.DurationMs != nil {
+				n.DurationMs = s.DurationMs
+			}
+		}
+	}
+
+	// Third pass: build parent→children relationships using enclosingIds.
+	// enclosingIds is ordered innermost-first, so enclosingIds[0] is the
+	// immediate parent block.
+	childOf := make(map[string]string) // nodeId → parentNodeId
+	for _, s := range steps {
+		if s.Event != "STEP_START" || len(s.EnclosingIds) == 0 {
+			continue
+		}
+		for _, encId := range s.EnclosingIds {
+			if _, ok := nodesByStart[encId]; ok {
+				childOf[s.NodeId] = encId
+				break
+			}
+		}
+	}
+
+	for childId, parentId := range childOf {
+		parent := nodesByStart[parentId]
+		child := nodesByStart[childId]
+		if parent != nil && child != nil {
+			parent.Children = append(parent.Children, child)
+		}
+	}
+
+	// Collect root nodes (no parent in our node map).
+	var roots []*stepNode
+	for nodeId, n := range nodesByStart {
+		if _, hasParent := childOf[nodeId]; !hasParent {
+			roots = append(roots, n)
+		}
+	}
+
+	// Sort roots and children by start timestamp for deterministic output.
+	sort.Slice(roots, func(i, j int) bool { return roots[i].StartTS < roots[j].StartTS })
+	sortChildren(roots)
+
+	return roots
+}
+
+func sortChildren(nodes []*stepNode) {
+	for _, n := range nodes {
+		sort.Slice(n.Children, func(i, j int) bool { return n.Children[i].StartTS < n.Children[j].StartTS })
+		sortChildren(n.Children)
+	}
 }
 
 // --- Retention ------------------------------------------------------------------
@@ -383,10 +495,16 @@ func readStepEvents(path string) ([]stepEvent, error) {
 
 	var events []stepEvent
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	for scanner.Scan() {
 		var e stepEvent
 		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
 			continue
+		}
+		// librarySource is {source:"library",...} or {source:"pipeline"}.
+		// Nil out pipeline entries so the tree builder only sees library steps.
+		if e.LibrarySource != nil && e.LibrarySource.Source != "library" {
+			e.LibrarySource = nil
 		}
 		events = append(events, e)
 	}
