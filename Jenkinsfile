@@ -121,26 +121,28 @@ if os.path.exists("/mitm-data/deps.ndjson"):
             except Exception:
                 pass
 
+git_commit = os.environ.get("GIT_COMMIT", "")
+git_url = os.environ.get("GIT_URL", "")
+if git_commit:
+    deps.insert(0, {"uri": git_url, "digest": {"gitCommit": git_commit}})
+
 now = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 provenance = {
-    "predicateType": "https://slsa.dev/provenance/v1",
-    "predicate": {
-        "buildDefinition": {
-            "buildType": "https://tuxgrid.com/buildType/jenkins-kaniko/v1",
-            "externalParameters": {
-                "ref": os.environ.get("GIT_COMMIT", ""),
-                "repository": os.environ.get("GIT_URL", ""),
-                "dockerfile": "Dockerfile",
-            },
-            "resolvedDependencies": deps,
+    "buildDefinition": {
+        "buildType": "https://tuxgrid.com/buildType/jenkins-kaniko/v1",
+        "externalParameters": {
+            "ref": os.environ.get("GIT_COMMIT", ""),
+            "repository": os.environ.get("GIT_URL", ""),
+            "dockerfile": "Dockerfile",
         },
-        "runDetails": {
-            "builder": {"id": "https://jenkins.tuxgrid.com/job/" + os.environ.get("JOB_NAME", "") + "/" + os.environ.get("BUILD_NUMBER", "")},
-            "metadata": {
-                "invocationId": os.environ.get("BUILD_URL", ""),
-                "startedOn": now,
-                "finishedOn": now,
-            },
+        "resolvedDependencies": deps,
+    },
+    "runDetails": {
+        "builder": {"id": "https://jenkins.tuxgrid.com/job/" + os.environ.get("JOB_NAME", "") + "/" + os.environ.get("BUILD_NUMBER", "")},
+        "metadata": {
+            "invocationId": os.environ.get("BUILD_URL", ""),
+            "startedOn": now,
+            "finishedOn": now,
         },
     },
 }
