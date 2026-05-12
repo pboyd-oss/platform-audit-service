@@ -20,7 +20,19 @@ var (
 	dataDir         = envOrDefault("DATA_DIR", "/data/builds")
 	alertmanagerURL = envOrDefault("ALERTMANAGER_URL", "")
 	listenAddr      = envOrDefault("LISTEN_ADDR", ":8080")
+	ingestSecret    = os.Getenv("INGEST_SECRET")
 )
+
+func checkIngestAuth(w http.ResponseWriter, r *http.Request) bool {
+	if ingestSecret == "" {
+		return true
+	}
+	if r.Header.Get("Authorization") != "Bearer "+ingestSecret {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
 
 // per-auditId write mutex to prevent interleaved NDJSON lines
 var writeMu sync.Map
@@ -48,6 +60,9 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 func handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !checkIngestAuth(w, r) {
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -84,6 +99,9 @@ func handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 func handleIngestTetragon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !checkIngestAuth(w, r) {
 		return
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

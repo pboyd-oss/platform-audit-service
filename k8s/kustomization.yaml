@@ -5,3 +5,4 @@ resources:
   - pvc.yaml
   - service.yaml
   - deployment.yaml
+  - audit-ingest-sealedsecret.yaml

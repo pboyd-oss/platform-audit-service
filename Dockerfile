@@ -1,4 +1,6 @@
 FROM harbor.tuxgrid.com/docker.io/golang:1.23-alpine AS builder
+ARG PLATFORM_CA_B64=""
+RUN [ -z "$PLATFORM_CA_B64" ] || (printf '%s' "$PLATFORM_CA_B64" | base64 -d > /usr/local/share/ca-certificates/platform-build.crt && update-ca-certificates 2>/dev/null)
 WORKDIR /src
 COPY go.mod .
 COPY main.go .
