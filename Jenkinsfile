@@ -58,7 +58,7 @@ pipeline {
 
         stage('Sign') {
             steps {
-                container('build-sec-base') {
+                container('deploy-sec-base') {
                     withCredentials([
                         string(credentialsId: 'cosign-key', variable: 'COSIGN_PRIVATE_KEY'),
                         usernamePassword(
@@ -84,7 +84,7 @@ pipeline {
 
         stage('Deploy') {
             steps {
-                container('build-sec-base') {
+                container('deploy-sec-base') {
                     withCredentials([file(credentialsId: 'kubeconfig-kubernetes', variable: 'KUBECONFIG')]) {
                         sh '''
                             skaffold render --build-artifacts=artifacts.json --output=rendered.yaml
