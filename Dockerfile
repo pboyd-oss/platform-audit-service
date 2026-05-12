@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM harbor.tuxgrid.com/docker.io/golang:1.23-alpine AS builder
 WORKDIR /src
 COPY go.mod .
 COPY main.go .
