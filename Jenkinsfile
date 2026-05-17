@@ -27,11 +27,8 @@ pipeline {
         stage('Provenance') { steps { script { platformBuildProvenance() } } }
         stage('Deploy') {
             steps {
-                container('deploy-sec-base') {
-                    sh '''
-                        skaffold render --build-artifacts=artifacts.json --profile=dev --output=rendered.yaml
-                        kubectl apply --validate=false -f rendered.yaml
-                    '''
+                script {
+                    platformDeploy(workload: 'platform-audit-service', namespace: 'platform')
                 }
             }
         }
