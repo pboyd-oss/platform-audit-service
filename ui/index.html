@@ -135,22 +135,23 @@ async function showList() {
     let h = `<table class="tbl">
       <thead><tr>
         <th>build</th><th>steps</th><th>execs</th><th>http</th>
-        <th>blocked</th><th>anomalies</th><th>completed</th>
+        <th>blocked</th><th>network</th><th>anomalies</th><th>completed</th>
       </tr></thead><tbody>`;
 
     for (const b of builds) {
       if (b.in_progress) {
-        h += `<tr><td class="inprog" colspan="7">${esc(b.audit_id)} — in progress</td></tr>`;
+        h += `<tr><td class="inprog" colspan="8">${esc(b.audit_id)} — in progress</td></tr>`;
         continue;
       }
       const [job, num] = parseId(b.audit_id);
       const anomBadge = b.anomaly_count > 0 ? `<span class="badge br">${b.anomaly_count}</span>` : `<span class="badge bg">0</span>`;
       const blkBadge  = b.blocked_http_requests > 0 ? `<span class="badge by">${b.blocked_http_requests}</span>` : `<span class="badge bm">0</span>`;
+      const netBadge  = b.unexpected_network_count > 0 ? `<span class="badge br">${b.unexpected_network_count}!</span>` : `<span class="badge bm">${b.total_network_events||0}</span>`;
       const genAt = b.generated_at ? new Date(b.generated_at).toLocaleString() : '—';
       h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')">
         <td><span class="jpath">${esc(job)}/</span><span class="bnum">#${esc(num)}</span></td>
         <td>${b.total_steps}</td><td>${b.total_execs}</td><td>${b.total_http_requests||0}</td>
-        <td>${blkBadge}</td><td>${anomBadge}</td>
+        <td>${blkBadge}</td><td>${netBadge}</td><td>${anomBadge}</td>
         <td class="dim">${esc(genAt)}</td>
       </tr>`;
     }
@@ -192,18 +193,22 @@ function render() {
   const http  = d.correlated_http  || [];
 
   // per-node counts
-  const ec = {}, hc = {};
-  for (const e of execs) { const n = e.matched_step?.nodeId; if (n) ec[n] = (ec[n]||0)+1; }
-  for (const e of http)  { const n = e.matched_step?.nodeId; if (n) hc[n] = (hc[n]||0)+1; }
+  const ec = {}, hc = {}, nc = {};
+  for (const e of execs)   { const n = e.matched_step?.nodeId; if (n) ec[n] = (ec[n]||0)+1; }
+  for (const e of http)    { const n = e.matched_step?.nodeId; if (n) hc[n] = (hc[n]||0)+1; }
+  for (const e of (d.correlated_network||[])) { const n = e.matched_step?.nodeId; if (n) nc[n] = (nc[n]||0)+1; }
 
   const blkCls   = d.blocked_http_requests > 0 ? ' yellow' : '';
   const anomCls  = d.anomaly_count > 0 ? ' red' : '';
+  const netCls   = d.unexpected_network_count > 0 ? ' red' : '';
 
   let h = `<div class="stats">
     <div><div class="stat-label">steps</div><div class="stat-val">${d.total_steps}</div></div>
     <div><div class="stat-label">execs</div><div class="stat-val">${d.total_execs}</div></div>
     <div><div class="stat-label">http</div><div class="stat-val">${d.total_http_requests||0}</div></div>
     <div><div class="stat-label">blocked</div><div class="stat-val${blkCls}">${d.blocked_http_requests||0}</div></div>
+    <div><div class="stat-label">network</div><div class="stat-val">${d.total_network_events||0}</div></div>
+    <div><div class="stat-label">unexpected</div><div class="stat-val${netCls}">${d.unexpected_network_count||0}</div></div>
     <div><div class="stat-label">anomalies</div><div class="stat-val${anomCls}">${d.anomaly_count}</div></div>
   </div>`;
 
@@ -211,7 +216,7 @@ function render() {
   h += '<div class="sec"><div class="sec-title">step tree';
   if (_filter) h += ` <span class="filter-info">filtered</span> <span class="clear-filter" onclick="clearF()">✕ clear</span>`;
   h += '</div>';
-  h += '<div class="tree">' + renderTree(d.step_tree||[], ec, hc, true) + '</div></div>';
+  h += '<div class="tree">' + renderTree(d.step_tree||[], ec, hc, nc, true) + '</div></div>';
 
   // execs
   const filtExecs = _filter ? execs.filter(e => e.matched_step?.nodeId === _filter) : execs;
@@ -227,10 +232,19 @@ function render() {
     h += '</div>' + httpTable(filtHttp) + '</div>';
   }
 
+  // network (tcp connects)
+  const network = d.correlated_network || [];
+  if (network.length > 0) {
+    const filtNet = _filter ? network.filter(e => e.matched_step?.nodeId === _filter) : network;
+    h += '<div class="sec"><div class="sec-title">tcp connections';
+    if (_filter) h += ` <span class="filter-info">${filtNet.length} of ${network.length}</span>`;
+    h += '</div>' + networkTable(filtNet) + '</div>';
+  }
+
   document.getElementById('app').innerHTML = h;
 }
 
-function renderTree(nodes, ec, hc, root) {
+function renderTree(nodes, ec, hc, nc, root) {
   if (!nodes?.length) return '';
   let h = '';
   for (const n of nodes) {
@@ -242,14 +256,15 @@ function renderTree(nodes, ec, hc, root) {
     const fail = n.result === 'FAILURE' ? '<span class="fail">FAIL</span>' : '';
     const e    = ec[n.nodeId] ? `<span class="ec">${ec[n.nodeId]}e</span>` : '';
     const ht   = hc[n.nodeId] ? `<span class="hc">${hc[n.nodeId]}h</span>` : '';
+    const nt   = nc[n.nodeId] ? `<span class="fn">${nc[n.nodeId]}t</span>` : '';
     h += `<div class="tnode${root?' root':''}">
       <div class="trow${sel}" onclick="selectNode('${esc(n.nodeId)}')">
         <span class="expand">${exp}</span>
         <span class="sname" title="${esc(n.stepName)}">${esc(n.stepName)}</span>
-        ${fn}${e}${ht}${fail}
+        ${fn}${e}${ht}${nt}${fail}
         <span class="dur">${dur}</span>
       </div>
-      ${renderTree(n.children||[], ec, hc, false)}
+      ${renderTree(n.children||[], ec, hc, nc, false)}
     </div>`;
   }
   return h;
@@ -294,6 +309,26 @@ function httpTable(rows) {
       <td class="dim">${he.size ? fmtSize(he.size) : '—'}</td>
       <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
       <td class="dim">${fmtTime(he.ts)}</td>
+    </tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function networkTable(rows) {
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no tcp connect events</div>';
+  let h = `<table class="dtbl"><thead><tr>
+    <th>dest</th><th>pid</th><th>step</th><th>time</th>
+  </tr></thead><tbody>`;
+  for (const e of rows) {
+    const te  = e.tetragon_event;
+    const cls = e.anomaly ? ' class="anom"' : '';
+    const dest = `${esc(te.dest_ip||'?')}:${te.dest_port||'?'}`;
+    const step = e.matched_step?.stepName || (e.anomaly ? '⚠ outside steps' : '—');
+    h += `<tr${cls}>
+      <td class="${e.anomaly?'serr':'url'}" title="${e.anomaly_reason?esc(e.anomaly_reason):''}">${dest}</td>
+      <td class="dim">${te.pid}</td>
+      <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
+      <td class="dim">${fmtTime(te.ts)}</td>
     </tr>`;
   }
   return h + '</tbody></table>';

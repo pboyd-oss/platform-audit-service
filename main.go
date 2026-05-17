@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,31 @@ import (
 	"sync"
 	"time"
 )
+
+var internalCIDRs = func() []*net.IPNet {
+	var nets []*net.IPNet
+	for _, cidr := range []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7",
+	} {
+		_, n, _ := net.ParseCIDR(cidr)
+		nets = append(nets, n)
+	}
+	return nets
+}()
+
+func isExternalIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, cidr := range internalCIDRs {
+		if cidr.Contains(parsed) {
+			return false
+		}
+	}
+	return true
+}
 
 //go:embed ui/index.html
 var uiHTML []byte
@@ -355,34 +381,46 @@ type correlatedExec struct {
 	AnomalyReason string        `json:"anomaly_reason,omitempty"`
 }
 
+type correlatedNetwork struct {
+	TetragonEvent tetragonEvent `json:"tetragon_event"`
+	MatchedStep   *stepEvent    `json:"matched_step,omitempty"`
+	Anomaly       bool          `json:"anomaly"`
+	AnomalyReason string        `json:"anomaly_reason,omitempty"`
+}
+
 type correlatedHttp struct {
 	HttpEvent   httpEvent  `json:"http_event"`
 	MatchedStep *stepEvent `json:"matched_step,omitempty"`
 }
 
 type correlationReport struct {
-	AuditId             string           `json:"audit_id"`
-	GeneratedAt         string           `json:"generated_at"`
-	TotalSteps          int              `json:"total_steps"`
-	TotalExecs          int              `json:"total_execs"`
-	AnomalyCount        int              `json:"anomaly_count"`
-	TotalHttpRequests   int              `json:"total_http_requests"`
-	BlockedHttpRequests int              `json:"blocked_http_requests"`
-	StepTree            []*stepNode      `json:"step_tree"`
-	CorrelatedExecs     []correlatedExec `json:"correlated_execs"`
-	CorrelatedHttp      []correlatedHttp `json:"correlated_http,omitempty"`
+	AuditId                string              `json:"audit_id"`
+	GeneratedAt            string              `json:"generated_at"`
+	TotalSteps             int                 `json:"total_steps"`
+	TotalExecs             int                 `json:"total_execs"`
+	AnomalyCount           int                 `json:"anomaly_count"`
+	TotalHttpRequests      int                 `json:"total_http_requests"`
+	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
+	TotalNetworkEvents     int                 `json:"total_network_events"`
+	UnexpectedNetworkCount int                 `json:"unexpected_network_count"`
+	StepTree               []*stepNode         `json:"step_tree"`
+	CorrelatedExecs        []correlatedExec    `json:"correlated_execs"`
+	CorrelatedHttp         []correlatedHttp    `json:"correlated_http,omitempty"`
+	CorrelatedNetwork      []correlatedNetwork `json:"correlated_network,omitempty"`
 }
 
 // buildMeta is a stripped-down correlationReport used for the build list endpoint.
 type buildMeta struct {
-	AuditId             string `json:"audit_id"`
-	GeneratedAt         string `json:"generated_at,omitempty"`
-	TotalSteps          int    `json:"total_steps"`
-	TotalExecs          int    `json:"total_execs"`
-	AnomalyCount        int    `json:"anomaly_count"`
-	TotalHttpRequests   int    `json:"total_http_requests"`
-	BlockedHttpRequests int    `json:"blocked_http_requests"`
-	InProgress          bool   `json:"in_progress,omitempty"`
+	AuditId                string `json:"audit_id"`
+	GeneratedAt            string `json:"generated_at,omitempty"`
+	TotalSteps             int    `json:"total_steps"`
+	TotalExecs             int    `json:"total_execs"`
+	AnomalyCount           int    `json:"anomaly_count"`
+	TotalHttpRequests      int    `json:"total_http_requests"`
+	BlockedHttpRequests    int    `json:"blocked_http_requests"`
+	TotalNetworkEvents     int    `json:"total_network_events"`
+	UnexpectedNetworkCount int    `json:"unexpected_network_count"`
+	InProgress             bool   `json:"in_progress,omitempty"`
 }
 
 func correlate(auditId string) {
@@ -440,9 +478,37 @@ func correlate(auditId string) {
 	}
 
 	var correlated []correlatedExec
+	var correlatedNet []correlatedNetwork
 	var anomalies []map[string]any
 
 	for _, te := range tetEvents {
+		if te.EventType == "network" {
+			cn := correlatedNetwork{TetragonEvent: te}
+			cn.MatchedStep = matchStep(te.TS)
+			if isExternalIP(te.DestIP) {
+				cn.Anomaly = true
+				cn.AnomalyReason = fmt.Sprintf("direct TCP connection to external IP %s:%d (expected to route through proxy)", te.DestIP, te.DestPort)
+				anomalies = append(anomalies, map[string]any{
+					"audit_id": auditId,
+					"type":     "unexpected_network",
+					"dest_ip":  te.DestIP,
+					"dest_port": te.DestPort,
+					"ts":       te.TS,
+					"reason":   cn.AnomalyReason,
+				})
+				fireAlert("unexpected_network", map[string]any{
+					"alertname":   "UnexpectedNetworkConnection",
+					"severity":    "warning",
+					"audit_id":    auditId,
+					"dest_ip":     te.DestIP,
+					"dest_port":   te.DestPort,
+					"summary":     fmt.Sprintf("Direct external TCP connection during build %s: %s:%d", auditId, te.DestIP, te.DestPort),
+					"description": "Build pod made a direct TCP connection to an external IP, bypassing the MITM proxy.",
+				})
+			}
+			correlatedNet = append(correlatedNet, cn)
+			continue
+		}
 		ce := correlatedExec{TetragonEvent: te}
 		ce.MatchedStep = matchStep(te.TS)
 		if ce.MatchedStep == nil {
@@ -479,17 +545,27 @@ func correlate(auditId string) {
 		}
 	}
 
+	unexpectedNetCount := 0
+	for _, cn := range correlatedNet {
+		if cn.Anomaly {
+			unexpectedNetCount++
+		}
+	}
+
 	report := correlationReport{
-		AuditId:             auditId,
-		GeneratedAt:         time.Now().UTC().Format(time.RFC3339Nano),
-		TotalSteps:          len(windows),
-		TotalExecs:          len(tetEvents),
-		AnomalyCount:        len(anomalies),
-		TotalHttpRequests:   len(httpEvents),
-		BlockedHttpRequests: blockedCount,
-		StepTree:            buildStepTree(steps),
-		CorrelatedExecs:     correlated,
-		CorrelatedHttp:      correlHttp,
+		AuditId:                auditId,
+		GeneratedAt:            time.Now().UTC().Format(time.RFC3339Nano),
+		TotalSteps:             len(windows),
+		TotalExecs:             len(correlated),
+		AnomalyCount:           len(anomalies),
+		TotalHttpRequests:      len(httpEvents),
+		BlockedHttpRequests:    blockedCount,
+		TotalNetworkEvents:     len(correlatedNet),
+		UnexpectedNetworkCount: unexpectedNetCount,
+		StepTree:               buildStepTree(steps),
+		CorrelatedExecs:        correlated,
+		CorrelatedHttp:         correlHttp,
+		CorrelatedNetwork:      correlatedNet,
 	}
 
 	writeJSON(filepath.Join(buildDir, "correlated.json"), report)
