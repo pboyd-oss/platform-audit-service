@@ -17,6 +17,8 @@ spec:
       labels:
         app: platform-audit-service
     spec:
+      imagePullSecrets:
+        - name: harbor-docker-pull
       serviceAccountName: platform-audit-service
       securityContext:
         runAsNonRoot: true
