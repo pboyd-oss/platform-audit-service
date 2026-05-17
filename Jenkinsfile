@@ -23,6 +23,11 @@ pipeline {
     }
 
     stages {
+        stage('Source Scan') {
+            steps {
+                build job: 'platform/services/audit-service/source-scan', wait: true
+            }
+        }
         stage('Build')      { steps { script { platformBuild() } } }
         stage('Archive')    { steps { script { platformArchive() } } }
         stage('Sign')       { steps { script { platformSign() } } }
