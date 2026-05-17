@@ -9,3 +9,9 @@ manifests:
       - k8s/
 deploy:
   kubectl: {}
+profiles:
+  - name: dev
+    manifests:
+      kustomize:
+        paths:
+          - k8s/
