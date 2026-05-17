@@ -1,7 +1,9 @@
+@Library('jenkins-library') _
+
 pipeline {
     agent {
         kubernetes {
-            cloud 'kubernetes'
+            cloud env.TUXGRID_BUILD_CLOUD
             inheritFrom 'platform-builder'
         }
     }
@@ -25,5 +27,6 @@ pipeline {
         stage('Archive')    { steps { script { platformArchive() } } }
         stage('Sign')       { steps { script { platformSign() } } }
         stage('Provenance') { steps { script { platformBuildProvenance() } } }
+        stage('Promote')    { steps { script { platformPromote() } } }
     }
 }
