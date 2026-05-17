@@ -6,3 +6,4 @@ resources:
   - service.yaml
   - deployment.yaml
   - audit-ingest-sealedsecret.yaml
+  - httproute.yaml
