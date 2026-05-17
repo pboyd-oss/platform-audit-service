@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"bufio"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 	"sync"
 	"time"
 )
+
+//go:embed ui/index.html
+var uiHTML []byte
 
 var (
 	dataDir         = envOrDefault("DATA_DIR", "/data/builds")
@@ -46,7 +50,10 @@ func main() {
 	http.HandleFunc("/healthz", handleHealthz)
 	http.HandleFunc("/ingest/event", handleIngestEvent)
 	http.HandleFunc("/ingest/tetragon", handleIngestTetragon)
-	http.HandleFunc("/builds/", handleBuildSummary)
+	http.HandleFunc("/ingest/http", handleIngestHttp)
+	http.HandleFunc("/builds/", handleBuilds)
+	http.HandleFunc("/ui", handleUI)
+	http.HandleFunc("/ui/", handleUI)
 	go startRetentionWorker()
 	log.Printf("audit-service listening on %s, data dir %s", listenAddr, dataDir)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
@@ -55,6 +62,11 @@ func main() {
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "ok")
+}
+
+func handleUI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(uiHTML)
 }
 
 func handleIngestEvent(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +130,7 @@ func handleIngestTetragon(w http.ResponseWriter, r *http.Request) {
 
 	auditId := extractTetragonAuditId(event)
 	if auditId == "" {
-		// exec() with no PLATFORM_AUDIT_ID in a build namespace = critical alert
+		// exec() with no auditId in a build namespace = critical alert
 		log.Printf("WARN: Tetragon exec event with no PLATFORM_AUDIT_ID: %s", string(body))
 		fireAlert("exec_no_audit_id", map[string]any{
 			"alertname":   "ExecWithNoAuditId",
@@ -139,17 +151,126 @@ func handleIngestTetragon(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+func handleIngestHttp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !checkIngestAuth(w, r) {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+
+	var event map[string]any
+	if err := json.Unmarshal(body, &event); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	auditId, _ := event["auditId"].(string)
+	if auditId == "" {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	if err := appendNDJSON(auditId, "http.ndjson", body); err != nil {
+		log.Printf("ERROR writing http event for %s: %v", auditId, err)
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleBuilds routes GET /builds/ (list) and GET /builds/{id}/summary (detail).
+func handleBuilds(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/builds/")
+	if path == "" {
+		handleBuildList(w, r)
+		return
+	}
+	handleBuildSummary(w, r)
+}
+
+// handleBuildList serves GET /builds/ — returns metadata for all completed builds.
+func handleBuildList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			w.Write([]byte("[]"))
+			return
+		}
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+
+	type item struct {
+		meta  buildMeta
+		mtime time.Time
+	}
+	var items []item
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, _ := e.Info()
+		mtime := time.Time{}
+		if info != nil {
+			mtime = info.ModTime()
+		}
+		auditId := e.Name()
+		corPath := filepath.Join(dataDir, auditId, "correlated.json")
+		data, err := os.ReadFile(corPath)
+		if err != nil {
+			// No correlated.json yet — mark as in-progress if events exist
+			evPath := filepath.Join(dataDir, auditId, "events.ndjson")
+			if _, serr := os.Stat(evPath); serr == nil {
+				items = append(items, item{meta: buildMeta{AuditId: auditId, InProgress: true}, mtime: mtime})
+			}
+			continue
+		}
+		var meta buildMeta
+		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+		items = append(items, item{meta: meta, mtime: mtime})
+	}
+
+	sort.Slice(items, func(i, j int) bool { return items[i].mtime.After(items[j].mtime) })
+
+	// Cap at 200 most recent builds
+	if len(items) > 200 {
+		items = items[:200]
+	}
+
+	out := make([]buildMeta, len(items))
+	for i, it := range items {
+		out[i] = it.meta
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
 // handleBuildSummary serves GET /builds/{auditId}/summary — returns correlated.json.
-// Returns 404 if BUILD_END has not yet been received for this auditId.
 func handleBuildSummary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Parse auditId from /builds/{auditId}/summary
 	path := strings.TrimPrefix(r.URL.Path, "/builds/")
 	auditId := strings.TrimSuffix(path, "/summary")
-	if auditId == "" || auditId == path {
+	if auditId == "" || auditId == path || !strings.HasSuffix(path, "/summary") {
 		http.Error(w, "invalid path — expected /builds/{auditId}/summary", http.StatusBadRequest)
 		return
 	}
@@ -165,13 +286,14 @@ func handleBuildSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Write(data)
 }
 
 // --- Correlation ----------------------------------------------------------------
 
 type libraryRef struct {
-	Source   string `json:"source,omitempty"`  // "library" or "pipeline"
+	Source   string `json:"source,omitempty"`
 	Library  string `json:"library,omitempty"`
 	Version  string `json:"version,omitempty"`
 	StepName string `json:"stepName,omitempty"`
@@ -191,7 +313,6 @@ type stepEvent struct {
 	CalledFrom    *libraryRef `json:"calledFrom,omitempty"`
 }
 
-// stepNode is one node in the reconstructed call tree.
 type stepNode struct {
 	NodeId       string      `json:"nodeId"`
 	StepName     string      `json:"stepName"`
@@ -208,12 +329,23 @@ type stepNode struct {
 type tetragonEvent struct {
 	TS        int64  `json:"ts"`
 	AuditId   string `json:"auditId"`
-	EventType string `json:"event_type"` // "exec" or "network"
+	EventType string `json:"event_type"`
 	Binary    string `json:"binary"`
 	Args      string `json:"args"`
 	Pid       int    `json:"pid"`
 	DestIP    string `json:"dest_ip,omitempty"`
 	DestPort  int    `json:"dest_port,omitempty"`
+}
+
+type httpEvent struct {
+	AuditId string `json:"auditId"`
+	TS      int64  `json:"ts"`
+	URL     string `json:"url"`
+	Method  string `json:"method"`
+	Status  int    `json:"status"`
+	Size    int    `json:"size"`
+	SHA256  string `json:"sha256,omitempty"`
+	Blocked bool   `json:"blocked"`
 }
 
 type correlatedExec struct {
@@ -223,14 +355,34 @@ type correlatedExec struct {
 	AnomalyReason string        `json:"anomaly_reason,omitempty"`
 }
 
+type correlatedHttp struct {
+	HttpEvent   httpEvent  `json:"http_event"`
+	MatchedStep *stepEvent `json:"matched_step,omitempty"`
+}
+
 type correlationReport struct {
-	AuditId         string           `json:"audit_id"`
-	GeneratedAt     string           `json:"generated_at"`
-	TotalSteps      int              `json:"total_steps"`
-	TotalExecs      int              `json:"total_execs"`
-	AnomalyCount    int              `json:"anomaly_count"`
-	StepTree        []*stepNode      `json:"step_tree"`
-	CorrelatedExecs []correlatedExec `json:"correlated_execs"`
+	AuditId             string           `json:"audit_id"`
+	GeneratedAt         string           `json:"generated_at"`
+	TotalSteps          int              `json:"total_steps"`
+	TotalExecs          int              `json:"total_execs"`
+	AnomalyCount        int              `json:"anomaly_count"`
+	TotalHttpRequests   int              `json:"total_http_requests"`
+	BlockedHttpRequests int              `json:"blocked_http_requests"`
+	StepTree            []*stepNode      `json:"step_tree"`
+	CorrelatedExecs     []correlatedExec `json:"correlated_execs"`
+	CorrelatedHttp      []correlatedHttp `json:"correlated_http,omitempty"`
+}
+
+// buildMeta is a stripped-down correlationReport used for the build list endpoint.
+type buildMeta struct {
+	AuditId             string `json:"audit_id"`
+	GeneratedAt         string `json:"generated_at,omitempty"`
+	TotalSteps          int    `json:"total_steps"`
+	TotalExecs          int    `json:"total_execs"`
+	AnomalyCount        int    `json:"anomaly_count"`
+	TotalHttpRequests   int    `json:"total_http_requests"`
+	BlockedHttpRequests int    `json:"blocked_http_requests"`
+	InProgress          bool   `json:"in_progress,omitempty"`
 }
 
 func correlate(auditId string) {
@@ -247,6 +399,11 @@ func correlate(auditId string) {
 	tetEvents, err := readTetragonEvents(filepath.Join(buildDir, "tetragon.ndjson"))
 	if err != nil {
 		log.Printf("WARN correlate %s: reading tetragon events: %v", auditId, err)
+	}
+
+	httpEvents, err := readHttpEvents(filepath.Join(buildDir, "http.ndjson"))
+	if err != nil {
+		log.Printf("WARN correlate %s: reading http events: %v", auditId, err)
 	}
 
 	type window struct {
@@ -272,32 +429,33 @@ func correlate(auditId string) {
 
 	sort.Slice(windows, func(i, j int) bool { return windows[i].startTS < windows[j].startTS })
 
+	matchStep := func(ts int64) *stepEvent {
+		for i := range windows {
+			if ts >= windows[i].startTS && ts <= windows[i].endTS {
+				s := windows[i].step
+				return &s
+			}
+		}
+		return nil
+	}
+
 	var correlated []correlatedExec
 	var anomalies []map[string]any
 
 	for _, te := range tetEvents {
 		ce := correlatedExec{TetragonEvent: te}
-
-		var matched *window
-		for i := range windows {
-			if te.TS >= windows[i].startTS && te.TS <= windows[i].endTS {
-				matched = &windows[i]
-				break
-			}
-		}
-
-		if matched == nil {
+		ce.MatchedStep = matchStep(te.TS)
+		if ce.MatchedStep == nil {
 			ce.Anomaly = true
 			ce.AnomalyReason = "exec() occurred outside any declared pipeline step"
-			anomaly := map[string]any{
+			anomalies = append(anomalies, map[string]any{
 				"audit_id": auditId,
 				"type":     "undeclared_exec",
 				"binary":   te.Binary,
 				"args":     te.Args,
 				"ts":       te.TS,
 				"reason":   ce.AnomalyReason,
-			}
-			anomalies = append(anomalies, anomaly)
+			})
 			fireAlert("undeclared_exec", map[string]any{
 				"alertname":   "UndeclaredExec",
 				"severity":    "critical",
@@ -306,22 +464,32 @@ func correlate(auditId string) {
 				"summary":     fmt.Sprintf("Undeclared exec() during build %s: %s", auditId, te.Binary),
 				"description": "A process executed outside any declared pipeline step. Possible supply chain injection.",
 			})
-		} else {
-			step := matched.step
-			ce.MatchedStep = &step
 		}
-
 		correlated = append(correlated, ce)
 	}
 
+	var correlHttp []correlatedHttp
+	blockedCount := 0
+	for _, he := range httpEvents {
+		ch := correlatedHttp{HttpEvent: he}
+		ch.MatchedStep = matchStep(he.TS)
+		correlHttp = append(correlHttp, ch)
+		if he.Blocked {
+			blockedCount++
+		}
+	}
+
 	report := correlationReport{
-		AuditId:         auditId,
-		GeneratedAt:     time.Now().UTC().Format(time.RFC3339Nano),
-		TotalSteps:      len(windows),
-		TotalExecs:      len(tetEvents),
-		AnomalyCount:    len(anomalies),
-		StepTree:        buildStepTree(steps),
-		CorrelatedExecs: correlated,
+		AuditId:             auditId,
+		GeneratedAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		TotalSteps:          len(windows),
+		TotalExecs:          len(tetEvents),
+		AnomalyCount:        len(anomalies),
+		TotalHttpRequests:   len(httpEvents),
+		BlockedHttpRequests: blockedCount,
+		StepTree:            buildStepTree(steps),
+		CorrelatedExecs:     correlated,
+		CorrelatedHttp:      correlHttp,
 	}
 
 	writeJSON(filepath.Join(buildDir, "correlated.json"), report)
@@ -329,20 +497,15 @@ func correlate(auditId string) {
 		writeJSON(filepath.Join(buildDir, "anomalies.json"), anomalies)
 	}
 
-	log.Printf("correlation complete %s: steps=%d execs=%d anomalies=%d",
-		auditId, report.TotalSteps, report.TotalExecs, report.AnomalyCount)
+	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d",
+		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount)
 }
 
 // --- Step tree ------------------------------------------------------------------
 
-// buildStepTree reconstructs the call hierarchy from the flat list of step
-// events emitted by the graph listener. It uses enclosingIds to nest children
-// under their nearest enclosing step. Steps emitted by library functions are
-// attributed via librarySource / calledFrom that the listener already injected.
 func buildStepTree(steps []stepEvent) []*stepNode {
 	nodesByStart := make(map[string]*stepNode)
 
-	// First pass: create a node for every STEP_START.
 	for _, s := range steps {
 		if s.Event != "STEP_START" {
 			continue
@@ -358,7 +521,6 @@ func buildStepTree(steps []stepEvent) []*stepNode {
 		nodesByStart[s.NodeId] = n
 	}
 
-	// Second pass: apply STEP_END data (duration, result).
 	for _, s := range steps {
 		if s.Event != "STEP_END" || s.StartNodeId == "" {
 			continue
@@ -372,10 +534,7 @@ func buildStepTree(steps []stepEvent) []*stepNode {
 		}
 	}
 
-	// Third pass: build parent→children relationships using enclosingIds.
-	// enclosingIds is ordered innermost-first, so enclosingIds[0] is the
-	// immediate parent block.
-	childOf := make(map[string]string) // nodeId → parentNodeId
+	childOf := make(map[string]string)
 	for _, s := range steps {
 		if s.Event != "STEP_START" || len(s.EnclosingIds) == 0 {
 			continue
@@ -396,7 +555,6 @@ func buildStepTree(steps []stepEvent) []*stepNode {
 		}
 	}
 
-	// Collect root nodes (no parent in our node map).
 	var roots []*stepNode
 	for nodeId, n := range nodesByStart {
 		if _, hasParent := childOf[nodeId]; !hasParent {
@@ -404,7 +562,6 @@ func buildStepTree(steps []stepEvent) []*stepNode {
 		}
 	}
 
-	// Sort roots and children by start timestamp for deterministic output.
 	sort.Slice(roots, func(i, j int) bool { return roots[i].StartTS < roots[j].StartTS })
 	sortChildren(roots)
 
@@ -519,8 +676,6 @@ func readStepEvents(path string) ([]stepEvent, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
 			continue
 		}
-		// librarySource is {source:"library",...} or {source:"pipeline"}.
-		// Nil out pipeline entries so the tree builder only sees library steps.
 		if e.LibrarySource != nil && e.LibrarySource.Source != "library" {
 			e.LibrarySource = nil
 		}
@@ -551,13 +706,34 @@ func readTetragonEvents(path string) ([]tetragonEvent, error) {
 	return events, scanner.Err()
 }
 
+func readHttpEvents(path string) ([]httpEvent, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+
+	var events []httpEvent
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var e httpEvent
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
+			continue
+		}
+		events = append(events, e)
+	}
+	return events, scanner.Err()
+}
+
 // --- Tetragon helpers -----------------------------------------------------------
 
 func extractTetragonAuditId(event map[string]any) string {
 	if id, ok := event["auditId"].(string); ok && id != "" {
 		return id
 	}
-	// Raw Tetragon JSON: process.arguments_env is null-separated env list
 	if proc, ok := event["process"].(map[string]any); ok {
 		if env, ok := proc["arguments_env"].(string); ok {
 			for _, kv := range strings.Split(env, "\x00") {

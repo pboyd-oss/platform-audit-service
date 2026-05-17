@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Audit Service</title>
+<style>
+:root {
+  --bg:     #0d1117;
+  --bg2:    #161b22;
+  --bg3:    #21262d;
+  --border: #30363d;
+  --text:   #c9d1d9;
+  --muted:  #8b949e;
+  --green:  #3fb950;
+  --red:    #f85149;
+  --yellow: #d29922;
+  --blue:   #58a6ff;
+  --font:   'SF Mono','Fira Code','Cascadia Code',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;line-height:1.5}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+header{background:var(--bg2);border-bottom:1px solid var(--border);padding:10px 24px;display:flex;align-items:center;gap:16px}
+header h1{font-size:13px;color:var(--blue);font-weight:normal}
+#back{cursor:pointer;color:var(--muted);font-size:12px;display:none}
+#back:hover{color:var(--text)}
+#breadcrumb{color:var(--muted);font-size:12px}
+main{padding:20px 24px;max-width:1400px}
+
+/* build list */
+.tbl{width:100%;border-collapse:collapse}
+.tbl th{text-align:left;color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--border);font-weight:normal;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.tbl td{padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+.tbl tr.clickable:hover td{background:var(--bg2);cursor:pointer}
+.inprog{color:var(--muted);font-style:italic}
+.jpath{color:var(--muted)}
+.bnum{font-weight:bold}
+
+/* badges */
+.badge{display:inline-block;padding:1px 5px;border-radius:3px;font-size:11px}
+.br{background:rgba(248,81,73,.15);color:var(--red)}
+.bg{background:rgba(63,185,80,.15);color:var(--green)}
+.by{background:rgba(210,153,34,.15);color:var(--yellow)}
+.bm{background:var(--bg3);color:var(--muted)}
+
+/* stats bar */
+.stats{display:flex;gap:28px;padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;margin-bottom:20px}
+.stat-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+.stat-val{font-size:22px;margin-top:2px}
+.stat-val.red{color:var(--red)}
+.stat-val.yellow{color:var(--yellow)}
+
+/* sections */
+.sec{margin-bottom:20px}
+.sec-title{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:10px;display:flex;align-items:center;gap:10px}
+.filter-info{color:var(--blue);font-size:11px}
+.clear-filter{color:var(--muted);font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0}
+.clear-filter:hover{color:var(--text)}
+
+/* step tree */
+.tree{font-size:12px}
+.tnode{border-left:1px solid var(--border);margin-left:10px;padding-left:10px}
+.tnode.root{border-left:none;margin-left:0;padding-left:0}
+.trow{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;border-radius:3px;padding-left:4px}
+.trow:hover{background:var(--bg2)}
+.trow.sel{background:rgba(88,166,255,.08);color:var(--blue)}
+.trow .expand{color:var(--muted);width:10px;flex-shrink:0;font-size:10px}
+.trow .sname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .fn{color:var(--muted);font-size:11px;flex-shrink:0}
+.trow .ec{color:var(--green);font-size:10px;flex-shrink:0}
+.trow .hc{color:var(--blue);font-size:10px;flex-shrink:0}
+.trow .dur{color:var(--muted);font-size:10px;flex-shrink:0;min-width:45px;text-align:right}
+.trow .fail{color:var(--red);font-size:10px;flex-shrink:0}
+
+/* data tables */
+.dtbl{width:100%;border-collapse:collapse;font-size:12px}
+.dtbl th{text-align:left;color:var(--muted);padding:5px 8px;border-bottom:1px solid var(--border);font-weight:normal;font-size:10px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap}
+.dtbl td{padding:4px 8px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px}
+.dtbl tr:hover td{background:var(--bg2)}
+.dtbl tr.anom td{background:rgba(248,81,73,.05)}
+.dtbl tr.anom:hover td{background:rgba(248,81,73,.1)}
+.dtbl tr.blk td{background:rgba(210,153,34,.05)}
+.dtbl tr.blk:hover td{background:rgba(210,153,34,.1)}
+.bin{color:var(--green)}
+.url{color:var(--blue)}
+.sok{color:var(--green)}
+.serr{color:var(--red)}
+.sblk{color:var(--yellow)}
+.dim{color:var(--muted)}
+
+.msg{color:var(--muted);padding:20px 0;text-align:center;font-size:12px}
+.err{color:var(--red);padding:20px 0;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>platform-audit-service</h1>
+  <span id="back">← builds</span>
+  <span id="breadcrumb"></span>
+</header>
+<main id="app"><div class="msg">loading…</div></main>
+
+<script>
+'use strict';
+
+// --- routing ---
+let _data = null;
+let _filter = null;
+
+function route() {
+  const p = new URLSearchParams(location.search).get('build');
+  if (p) showBuild(p);
+  else showList();
+}
+
+document.getElementById('back').addEventListener('click', () => {
+  history.pushState(null, '', '/ui');
+  _filter = null;
+  route();
+});
+window.addEventListener('popstate', () => { _filter = null; route(); });
+
+route();
+
+// --- build list ---
+async function showList() {
+  document.getElementById('back').style.display = 'none';
+  document.getElementById('breadcrumb').textContent = '';
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="msg">loading…</div>';
+  try {
+    const builds = await fetch('/builds/').then(r => r.json());
+    if (!builds.length) { app.innerHTML = '<div class="msg">no completed builds yet</div>'; return; }
+
+    let h = `<table class="tbl">
+      <thead><tr>
+        <th>build</th><th>steps</th><th>execs</th><th>http</th>
+        <th>blocked</th><th>anomalies</th><th>completed</th>
+      </tr></thead><tbody>`;
+
+    for (const b of builds) {
+      if (b.in_progress) {
+        h += `<tr><td class="inprog" colspan="7">${esc(b.audit_id)} — in progress</td></tr>`;
+        continue;
+      }
+      const [job, num] = parseId(b.audit_id);
+      const anomBadge = b.anomaly_count > 0 ? `<span class="badge br">${b.anomaly_count}</span>` : `<span class="badge bg">0</span>`;
+      const blkBadge  = b.blocked_http_requests > 0 ? `<span class="badge by">${b.blocked_http_requests}</span>` : `<span class="badge bm">0</span>`;
+      const genAt = b.generated_at ? new Date(b.generated_at).toLocaleString() : '—';
+      h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')">
+        <td><span class="jpath">${esc(job)}/</span><span class="bnum">#${esc(num)}</span></td>
+        <td>${b.total_steps}</td><td>${b.total_execs}</td><td>${b.total_http_requests||0}</td>
+        <td>${blkBadge}</td><td>${anomBadge}</td>
+        <td class="dim">${esc(genAt)}</td>
+      </tr>`;
+    }
+    h += '</tbody></table>';
+    app.innerHTML = h;
+  } catch(e) {
+    app.innerHTML = `<div class="err">failed to load: ${esc(e.message)}</div>`;
+  }
+}
+
+function nav(id) {
+  _filter = null;
+  history.pushState(null, '', `/ui?build=${encodeURIComponent(id)}`);
+  showBuild(id);
+}
+
+// --- build detail ---
+async function showBuild(id) {
+  document.getElementById('back').style.display = '';
+  document.getElementById('breadcrumb').textContent = id;
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="msg">loading…</div>';
+  try {
+    const d = await fetch(`/builds/${encodeURIComponent(id)}/summary`).then(r => {
+      if (!r.ok) throw new Error(r.status === 404 ? 'build not found or still in progress' : r.statusText);
+      return r.json();
+    });
+    _data = d;
+    render();
+  } catch(e) {
+    app.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+function render() {
+  if (!_data) return;
+  const d = _data;
+  const execs = d.correlated_execs || [];
+  const http  = d.correlated_http  || [];
+
+  // per-node counts
+  const ec = {}, hc = {};
+  for (const e of execs) { const n = e.matched_step?.nodeId; if (n) ec[n] = (ec[n]||0)+1; }
+  for (const e of http)  { const n = e.matched_step?.nodeId; if (n) hc[n] = (hc[n]||0)+1; }
+
+  const blkCls   = d.blocked_http_requests > 0 ? ' yellow' : '';
+  const anomCls  = d.anomaly_count > 0 ? ' red' : '';
+
+  let h = `<div class="stats">
+    <div><div class="stat-label">steps</div><div class="stat-val">${d.total_steps}</div></div>
+    <div><div class="stat-label">execs</div><div class="stat-val">${d.total_execs}</div></div>
+    <div><div class="stat-label">http</div><div class="stat-val">${d.total_http_requests||0}</div></div>
+    <div><div class="stat-label">blocked</div><div class="stat-val${blkCls}">${d.blocked_http_requests||0}</div></div>
+    <div><div class="stat-label">anomalies</div><div class="stat-val${anomCls}">${d.anomaly_count}</div></div>
+  </div>`;
+
+  // step tree
+  h += '<div class="sec"><div class="sec-title">step tree';
+  if (_filter) h += ` <span class="filter-info">filtered</span> <span class="clear-filter" onclick="clearF()">✕ clear</span>`;
+  h += '</div>';
+  h += '<div class="tree">' + renderTree(d.step_tree||[], ec, hc, true) + '</div></div>';
+
+  // execs
+  const filtExecs = _filter ? execs.filter(e => e.matched_step?.nodeId === _filter) : execs;
+  h += '<div class="sec"><div class="sec-title">exec events';
+  if (_filter) h += ` <span class="filter-info">${filtExecs.length} of ${execs.length}</span>`;
+  h += '</div>' + execTable(filtExecs) + '</div>';
+
+  // http
+  if (http.length > 0) {
+    const filtHttp = _filter ? http.filter(e => e.matched_step?.nodeId === _filter) : http;
+    h += '<div class="sec"><div class="sec-title">http requests';
+    if (_filter) h += ` <span class="filter-info">${filtHttp.length} of ${http.length}</span>`;
+    h += '</div>' + httpTable(filtHttp) + '</div>';
+  }
+
+  document.getElementById('app').innerHTML = h;
+}
+
+function renderTree(nodes, ec, hc, root) {
+  if (!nodes?.length) return '';
+  let h = '';
+  for (const n of nodes) {
+    const sel  = _filter === n.nodeId ? ' sel' : '';
+    const exp  = n.children?.length ? '▾' : '·';
+    const fn   = n.functionName && n.functionName !== n.stepName
+                 ? `<span class="fn">(${esc(n.functionName)})</span>` : '';
+    const dur  = n.durationMs != null ? fmtDur(n.durationMs) : '';
+    const fail = n.result === 'FAILURE' ? '<span class="fail">FAIL</span>' : '';
+    const e    = ec[n.nodeId] ? `<span class="ec">${ec[n.nodeId]}e</span>` : '';
+    const ht   = hc[n.nodeId] ? `<span class="hc">${hc[n.nodeId]}h</span>` : '';
+    h += `<div class="tnode${root?' root':''}">
+      <div class="trow${sel}" onclick="selectNode('${esc(n.nodeId)}')">
+        <span class="expand">${exp}</span>
+        <span class="sname" title="${esc(n.stepName)}">${esc(n.stepName)}</span>
+        ${fn}${e}${ht}${fail}
+        <span class="dur">${dur}</span>
+      </div>
+      ${renderTree(n.children||[], ec, hc, false)}
+    </div>`;
+  }
+  return h;
+}
+
+function execTable(rows) {
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
+  let h = `<table class="dtbl"><thead><tr>
+    <th>binary</th><th>args</th><th>pid</th><th>step</th><th>time</th>
+  </tr></thead><tbody>`;
+  for (const e of rows) {
+    const te  = e.tetragon_event;
+    const cls = e.anomaly ? ' class="anom"' : '';
+    const bin = te.binary?.split('/').pop() || '';
+    const step = e.matched_step?.stepName || (e.anomaly ? '⚠ outside steps' : '—');
+    h += `<tr${cls}>
+      <td class="bin" title="${esc(te.binary)}">${esc(bin)}</td>
+      <td title="${esc(te.args)}">${esc((te.args||'').substring(0,100))}</td>
+      <td class="dim">${te.pid}</td>
+      <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
+      <td class="dim">${fmtTime(te.ts)}</td>
+    </tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function httpTable(rows) {
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no http events</div>';
+  let h = `<table class="dtbl"><thead><tr>
+    <th>method</th><th>url</th><th>status</th><th>size</th><th>step</th><th>time</th>
+  </tr></thead><tbody>`;
+  for (const e of rows) {
+    const he  = e.http_event;
+    const cls = he.blocked ? ' class="blk"' : '';
+    const scls = he.blocked ? 'sblk' : (he.status < 300 ? 'sok' : 'serr');
+    const stat = he.blocked ? '403 BLOCKED' : he.status;
+    const step = e.matched_step?.stepName || '—';
+    h += `<tr${cls}>
+      <td>${esc(he.method)}</td>
+      <td class="url" title="${esc(he.url)}">${esc((he.url||'').substring(0,90))}</td>
+      <td class="${scls}">${stat}</td>
+      <td class="dim">${he.size ? fmtSize(he.size) : '—'}</td>
+      <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
+      <td class="dim">${fmtTime(he.ts)}</td>
+    </tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function selectNode(id) {
+  _filter = _filter === id ? null : id;
+  render();
+  if (_filter) document.querySelector('.sec:nth-of-type(2)')?.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function clearF() { _filter = null; render(); }
+
+// --- helpers ---
+function parseId(id) {
+  const m = id.match(/^(.+)_(\d+)$/);
+  if (!m) return [id, '?'];
+  return [m[1].replace(/_/g, '/'), m[2]];
+}
+
+function fmtDur(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+  return Math.floor(ms/60000) + 'm' + Math.floor((ms%60000)/1000) + 's';
+}
+
+function fmtTime(ts) {
+  return new Date(ts).toISOString().replace('T',' ').replace('Z','').split('.')[0];
+}
+
+function fmtSize(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + 'K';
+  return (b/(1024*1024)).toFixed(1) + 'M';
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

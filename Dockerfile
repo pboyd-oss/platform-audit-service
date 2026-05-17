@@ -4,6 +4,7 @@ RUN [ -z "$PLATFORM_CA_B64" ] || (printf '%s' "$PLATFORM_CA_B64" | base64 -d > /
 WORKDIR /src
 COPY go.mod .
 COPY main.go .
+COPY ui/ ui/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o audit-service .
 
 FROM scratch
