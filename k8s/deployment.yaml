@@ -43,9 +43,15 @@ spec:
                 secretKeyRef:
                   name: audit-ingest-secret
                   key: token
+            - name: WHITELIST_PATH
+              value: /data/whitelist.json
           volumeMounts:
             - name: data
               mountPath: /data/builds
+            - name: whitelist
+              mountPath: /data/whitelist.json
+              subPath: whitelist.json
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /healthz
@@ -74,3 +80,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: audit-service-data
+        - name: whitelist
+          configMap:
+            name: audit-service-whitelist

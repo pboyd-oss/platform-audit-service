@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-service-whitelist
+  namespace: platform
+data:
+  whitelist.json: |
+    {
+      "global": [
+        "/bin/sh", "/usr/bin/sh",
+        "/bin/bash", "/usr/bin/bash",
+        "/usr/bin/env",
+        "/usr/bin/git",
+        "/usr/bin/java",
+        "/usr/bin/python3",
+        "/kaniko/executor",
+        "/usr/local/bin/cosign",
+        "/usr/bin/sed",
+        "/usr/bin/awk",
+        "/usr/bin/grep",
+        "/usr/bin/cat",
+        "/usr/bin/cut",
+        "/usr/bin/tr",
+        "/usr/bin/sort",
+        "/usr/bin/uniq",
+        "/usr/bin/head",
+        "/usr/bin/tail",
+        "/usr/bin/find",
+        "/usr/bin/xargs",
+        "/usr/bin/dirname",
+        "/usr/bin/basename",
+        "/usr/bin/readlink",
+        "/usr/bin/realpath",
+        "/usr/bin/tee",
+        "/usr/bin/wc",
+        "/usr/bin/chmod",
+        "/usr/bin/chown",
+        "/usr/bin/mkdir",
+        "/usr/bin/cp",
+        "/usr/bin/mv",
+        "/usr/bin/rm",
+        "/usr/bin/ln",
+        "/usr/bin/ls",
+        "/usr/bin/curl",
+        "/usr/bin/wget",
+        "/usr/bin/jq",
+        "/usr/bin/base64",
+        "/usr/bin/openssl"
+      ],
+      "per_step": {}
+    }

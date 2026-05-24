@@ -7,3 +7,4 @@ resources:
   - deployment.yaml
   - audit-ingest-sealedsecret.yaml
   - httproute.yaml
+  - audit-whitelist-configmap.yaml
