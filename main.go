@@ -478,6 +478,8 @@ type correlationReport struct {
 	TotalSteps             int                 `json:"total_steps"`
 	TotalExecs             int                 `json:"total_execs"`
 	AnomalyCount           int                 `json:"anomaly_count"`
+	TotalGroovyCalls       int                 `json:"total_groovy_calls"`
+	SandboxViolationCount  int                 `json:"sandbox_violation_count"`
 	TotalHttpRequests      int                 `json:"total_http_requests"`
 	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
 	TotalNetworkEvents     int                 `json:"total_network_events"`
@@ -495,6 +497,8 @@ type buildMeta struct {
 	TotalSteps             int    `json:"total_steps"`
 	TotalExecs             int    `json:"total_execs"`
 	AnomalyCount           int    `json:"anomaly_count"`
+	TotalGroovyCalls       int    `json:"total_groovy_calls"`
+	SandboxViolationCount  int    `json:"sandbox_violation_count"`
 	TotalHttpRequests      int    `json:"total_http_requests"`
 	BlockedHttpRequests    int    `json:"blocked_http_requests"`
 	TotalNetworkEvents     int    `json:"total_network_events"`
@@ -514,6 +518,25 @@ func correlate(auditId string, wait bool) {
 	if err != nil {
 		log.Printf("WARN correlate %s: reading steps: %v", auditId, err)
 	}
+
+	// Partition out PlatformGroovyInterceptor events (GROOVY_CALL/GROOVY_DENY).
+	// They share events.ndjson with step events but are not pipeline steps, so they
+	// must not enter the step-window/tree logic. A GROOVY_DENY is a blocked escape
+	// primitive (ProcessBuilder/exec/reflection/...) and also counts as a call attempt.
+	groovyCalls, sandboxViolations := 0, 0
+	filtered := steps[:0]
+	for _, s := range steps {
+		switch s.Event {
+		case "GROOVY_CALL":
+			groovyCalls++
+		case "GROOVY_DENY":
+			groovyCalls++
+			sandboxViolations++
+		default:
+			filtered = append(filtered, s)
+		}
+	}
+	steps = filtered
 
 	tetEvents, err := readTetragonEvents(filepath.Join(buildDir, "tetragon.ndjson"))
 	if err != nil {
@@ -737,6 +760,8 @@ func correlate(auditId string, wait bool) {
 		TotalSteps:             len(windows),
 		TotalExecs:             len(correlated),
 		AnomalyCount:           len(anomalies),
+		TotalGroovyCalls:       groovyCalls,
+		SandboxViolationCount:  sandboxViolations,
 		TotalHttpRequests:      len(httpEvents),
 		BlockedHttpRequests:    blockedCount,
 		TotalNetworkEvents:     len(correlatedNet),
@@ -752,8 +777,8 @@ func correlate(auditId string, wait bool) {
 		writeJSON(filepath.Join(buildDir, "anomalies.json"), anomalies)
 	}
 
-	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d",
-		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount)
+	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d groovy=%d denied=%d",
+		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount, report.TotalGroovyCalls, report.SandboxViolationCount)
 }
 
 // --- Step tree ------------------------------------------------------------------
