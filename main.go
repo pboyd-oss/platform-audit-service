@@ -532,6 +532,8 @@ type correlatedHttp struct {
 }
 
 type callSite struct {
+	Id      int    `json:"id"`
+	Parent  *int   `json:"parent,omitempty"`
 	Line    int    `json:"line"`
 	Kind    string `json:"kind"`
 	Target  string   `json:"target"`

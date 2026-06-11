@@ -68,6 +68,15 @@ main{padding:20px 24px;max-width:1400px}
 .cscount{color:var(--muted);font-size:11px;margin-left:auto}
 .cscalls{display:none;padding:0 10px 8px}
 .cscalls.open{display:block}
+.ctnode>.ctkids{display:none;padding-left:14px;border-left:1px solid var(--border);margin-left:6px}
+.ctnode.open>.ctkids{display:block}
+.ctrow{display:flex;align-items:center;gap:8px;padding:2px 4px;cursor:default;font-size:12px;border-radius:3px}
+.ctrow:hover{background:var(--bg2)}
+.ctrow.bad{background:rgba(248,81,73,.07)}
+.ctexp{color:var(--muted);width:10px;font-size:10px}
+.ctnode.open>.ctrow .ctexp{color:var(--blue)}
+.ctline{color:var(--muted);min-width:30px;font-size:11px;text-align:right}
+.ctcall{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
 
 /* sections */
 .sec{margin-bottom:20px}
@@ -340,30 +349,45 @@ async function loadCallSites() {
 
 function csToggleSyscall() { window._csSyscallOnly = !window._csSyscallOnly; renderCallSites(); }
 
+function csToggle(el){ el.parentElement.classList.toggle('open'); }
+function renderCallTree(calls) {
+  const byParent = {};
+  calls.forEach(c => { const p = (c.parent==null ? '_r' : c.parent); (byParent[p]=byParent[p]||[]).push(c); });
+  function node(c) {
+    const kids = byParent[c.id] || [];
+    const a = (c.args&&c.args.length) ? '('+c.args.map(z=>esc(z)).join(', ')+')' : '';
+    const sc = c.syscall ? `<span class="badge by">${esc(c.syscall)}</span>` : '';
+    const hk = kids.length > 0;
+    let h = `<div class="ctnode"><div class="ctrow${c.syscall?' bad':''}" onclick="csToggle(this)"><span class="ctexp">${hk?'\u25b8':'\u00b7'}</span><span class="ctline">${c.line}</span><span class="ctcall" title="${esc((c.target||'')+'.'+c.method+a)}">${esc(c.target||'')}.${esc(c.method)}${a}</span> ${sc}</div>`;
+    if (hk) h += `<div class="ctkids">${kids.map(node).join('')}</div>`;
+    return h + '</div>';
+  }
+  return (byParent['_r']||[]).map(node).join('') || '<div class="msg" style="text-align:left;padding:4px 0">no nested tree (older build without parent ids)</div>';
+}
 function renderCallSites() {
   const box = document.getElementById('callsites'); if (!box) return;
   const data = window._cs || [];
   if (!data.length) { box.innerHTML = '<div class="msg" style="text-align:left;padding:6px 0">no call sites for this build (recorder not active when it ran?)</div>'; return; }
   const rows = data.slice().sort((a,b) => (b.syscallGateways - a.syscallGateways) || String(a.source).localeCompare(String(b.source)));
   let h = `<div class="cstoolbar"><label><input type="checkbox" ${window._csSyscallOnly?'checked':''} onchange="csToggleSyscall()"> syscall gateways only</label></div>`;
-  rows.forEach((c, i) => {
+  rows.forEach((c) => {
     const calls = window._csSyscallOnly ? (c.calls||[]).filter(x=>x.syscall) : (c.calls||[]);
     if (window._csSyscallOnly && !calls.length) return;
     const gwBadge = c.syscallGateways > 0 ? `<span class="badge by">${c.syscallGateways} syscall</span>` : '';
     const oBadge  = `<span class="badge ${c.origin==='library'?'bm':'bg'}">${esc(c.origin)}</span>`;
-    h += `<div class="csgrp">
-      <div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')">
-        <span class="csexp">▸</span> ${oBadge} <span class="csclass">${esc(c.clazz||'')}</span>
-        <span class="cssrc">${esc(srcShort(c.source))}</span> <span class="cscount">${calls.length} calls</span> ${gwBadge}
-      </div>
-      <div class="cscalls"><table class="dtbl"><thead><tr><th>line</th><th>kind</th><th>call</th><th>syscall</th></tr></thead><tbody>`;
-    calls.forEach(x => {
-      const sc = x.syscall ? `<span class="badge by">${esc(x.syscall)}</span>` : '';
-      const rc = x.syscall ? ' class="bad"' : '';
-      const a = (x.args&&x.args.length) ? '('+x.args.map(z=>esc(z)).join(', ')+')' : '';
-      h += `<tr${rc}><td class="dim">${x.line}</td><td class="dim">${esc(x.kind)}</td><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td>${sc}</td></tr>`;
-    });
-    h += '</tbody></table></div></div>';
+    h += `<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">\u25b8</span> ${oBadge} <span class="csclass">${esc(c.clazz||'')}</span> <span class="cssrc">${esc(srcShort(c.source))}</span> <span class="cscount">${(c.calls||[]).length} calls</span> ${gwBadge}</div><div class="cscalls">`;
+    if (window._csSyscallOnly) {
+      h += '<table class="dtbl"><thead><tr><th>line</th><th>call</th><th>syscall</th></tr></thead><tbody>';
+      calls.forEach(x => {
+        const sc = x.syscall ? `<span class="badge by">${esc(x.syscall)}</span>` : '';
+        const a = (x.args&&x.args.length) ? '('+x.args.map(z=>esc(z)).join(', ')+')' : '';
+        h += `<tr class="bad"><td class="dim">${x.line}</td><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td>${sc}</td></tr>`;
+      });
+      h += '</tbody></table>';
+    } else {
+      h += renderCallTree(calls);
+    }
+    h += '</div></div>';
   });
   box.innerHTML = h;
 }
