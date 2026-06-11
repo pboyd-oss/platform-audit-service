@@ -245,6 +245,7 @@ function render() {
     <div><div class="stat-label">call-sites</div><div class="stat-val">${d.total_groovy_call_sites||0}</div></div>
     <div><div class="stat-label">syscall-gw</div><div class="stat-val${gwCls}">${d.syscall_gateway_count||0}</div></div>
     <div><div class="stat-label">jenkinsfile</div><div class="stat-val${jfCls}">${jfTxt}</div></div>
+    <div><div class="stat-label">runtime</div><div class="stat-val">${d.total_groovy_runtime_calls||0}</div></div>
   </div>`;
 
   h += groovyPanel(d);
@@ -276,6 +277,14 @@ function render() {
     h += '<div class="sec"><div class="sec-title">tcp connections';
     if (_filter) h += ` <span class="filter-info">${filtNet.length} of ${network.length}</span>`;
     h += '</div>' + networkTable(filtNet) + '</div>';
+  }
+
+  const rt = d.groovy_runtime || [];
+  if (rt.length > 0) {
+    h += '<div class="sec"><div class="sec-title">groovy runtime calls <span class="badge bg">'+(d.total_groovy_runtime_calls||rt.length)+'</span></div>';
+    h += '<table class="dtbl"><thead><tr><th>call (with runtime args)</th><th>kind</th><th>source</th></tr></thead><tbody>';
+    h += rt.map(x=>{const a=(x.args&&x.args.length)?'('+x.args.map(z=>esc(z)).join(', ')+')':'';return `<tr><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td class="dim">${esc(x.kind)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`;}).join('');
+    h += '</tbody></table></div>';
   }
 
   const files = d.correlated_files || [];

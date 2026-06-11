@@ -454,6 +454,11 @@ type stepEvent struct {
 	Origin              string     `json:"origin,omitempty"`
 	Source              string     `json:"source,omitempty"`
 	Clazz               string     `json:"clazz,omitempty"`
+	Line                int        `json:"line,omitempty"`
+	Kind                string     `json:"kind,omitempty"`
+	Target              string     `json:"target,omitempty"`
+	Method              string     `json:"method,omitempty"`
+	Args                []string   `json:"args,omitempty"`
 	Signature           string     `json:"signature,omitempty"`
 	Provenance          string     `json:"provenance,omitempty"`
 	SyscallGateways     int        `json:"syscallGateways,omitempty"`
@@ -539,6 +544,15 @@ type groovyDeny struct {
 	Provenance string `json:"provenance,omitempty"`
 }
 
+type runtimeCall struct {
+	Source string   `json:"source"`
+	Line   int      `json:"line"`
+	Kind   string   `json:"kind"`
+	Target string   `json:"target"`
+	Method string   `json:"method"`
+	Args   []string `json:"args,omitempty"`
+}
+
 type syscallSite struct {
 	Origin  string   `json:"origin"`
 	Source  string   `json:"source"`
@@ -559,10 +573,12 @@ type correlationReport struct {
 	SandboxViolationCount  int                 `json:"sandbox_violation_count"`
 	TotalGroovyCallSites   int                 `json:"total_groovy_call_sites"`
 	SyscallGatewayCount    int                 `json:"syscall_gateway_count"`
+	TotalGroovyRuntimeCalls int                `json:"total_groovy_runtime_calls"`
 	JenkinsfileApproved    *bool               `json:"jenkinsfile_approved,omitempty"`
 	JenkinsfileFindings    []string            `json:"jenkinsfile_findings,omitempty"`
 	GroovyDenies           []groovyDeny        `json:"groovy_denies,omitempty"`
 	SyscallCallSites       []syscallSite       `json:"syscall_call_sites,omitempty"`
+	GroovyRuntime          []runtimeCall       `json:"groovy_runtime,omitempty"`
 	TotalHttpRequests      int                 `json:"total_http_requests"`
 	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
 	TotalNetworkEvents     int                 `json:"total_network_events"`
@@ -588,6 +604,7 @@ type buildMeta struct {
 	SandboxViolationCount  int    `json:"sandbox_violation_count"`
 	TotalGroovyCallSites   int    `json:"total_groovy_call_sites"`
 	SyscallGatewayCount    int    `json:"syscall_gateway_count"`
+	TotalGroovyRuntimeCalls int   `json:"total_groovy_runtime_calls"`
 	TotalHttpRequests      int    `json:"total_http_requests"`
 	BlockedHttpRequests    int    `json:"blocked_http_requests"`
 	TotalNetworkEvents     int    `json:"total_network_events"`
@@ -620,6 +637,8 @@ func correlate(auditId string, wait bool) {
 	var jenkinsfileFindings []string
 	groovyDenies := []groovyDeny{}
 	syscallSites := []syscallSite{}
+	runtimeCalls := []runtimeCall{}
+	groovyRuntimeCalls := 0
 	filtered := steps[:0]
 	for _, s := range steps {
 		switch s.Event {
@@ -644,6 +663,11 @@ func correlate(auditId string, wait bool) {
 		case "JENKINSFILE_ANALYSIS":
 			jenkinsfileApproved = s.JenkinsfileApproved
 			jenkinsfileFindings = s.Findings
+		case "GROOVY_RUNTIME":
+			groovyRuntimeCalls++
+			if len(runtimeCalls) < 300 {
+				runtimeCalls = append(runtimeCalls, runtimeCall{Source: s.Source, Line: s.Line, Kind: s.Kind, Target: s.Target, Method: s.Method, Args: s.Args})
+			}
 		default:
 			filtered = append(filtered, s)
 		}
@@ -880,10 +904,12 @@ func correlate(auditId string, wait bool) {
 		SandboxViolationCount:  sandboxViolations,
 		TotalGroovyCallSites:   groovyCallSites,
 		SyscallGatewayCount:    syscallGateways,
+		TotalGroovyRuntimeCalls: groovyRuntimeCalls,
 		JenkinsfileApproved:    jenkinsfileApproved,
 		JenkinsfileFindings:    jenkinsfileFindings,
 		GroovyDenies:           groovyDenies,
 		SyscallCallSites:       syscallSites,
+		GroovyRuntime:          runtimeCalls,
 		TotalHttpRequests:      len(httpEvents),
 		BlockedHttpRequests:    blockedCount,
 		TotalNetworkEvents:     len(correlatedNet),
@@ -903,8 +929,8 @@ func correlate(auditId string, wait bool) {
 		writeJSON(filepath.Join(buildDir, "anomalies.json"), anomalies)
 	}
 
-	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d groovy=%d denied=%d callsites=%d syscall_gw=%d",
-		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount, report.TotalGroovyCalls, report.SandboxViolationCount, report.TotalGroovyCallSites, report.SyscallGatewayCount)
+	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d groovy=%d denied=%d callsites=%d syscall_gw=%d rt=%d",
+		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount, report.TotalGroovyCalls, report.SandboxViolationCount, report.TotalGroovyCallSites, report.SyscallGatewayCount, report.TotalGroovyRuntimeCalls)
 }
 
 // --- Step tree ------------------------------------------------------------------
