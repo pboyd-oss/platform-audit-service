@@ -500,16 +500,19 @@ function execTree(rows) {
     const byPid={}; g.rows.forEach(e=>byPid[e.tetragon_event.pid]=e);
     const kids={}; const roots=[];
     g.rows.forEach(e=>{const pp=e.tetragon_event.parent_pid; if(pp&&byPid[pp])(kids[pp]=kids[pp]||[]).push(e); else roots.push(e);});
-    const node=(e)=>{
-      const te=e.tetragon_event; const ch=kids[te.pid]||[];
+    if(!roots.length && g.rows.length) roots.push(g.rows[0]); // pure-cycle group
+    const node=(e, anc)=>{
+      const te=e.tetragon_event; const pid=te.pid;
+      const ch = anc.has(pid) ? [] : (kids[pid]||[]); // cycle guard: PID reuse can loop the lineage
+      const na = anc.has(pid) ? anc : new Set(anc).add(pid);
       const bin=(te.binary||'').split('/').pop();
       const args=te.args?` <span class="dim">${esc((te.args||'').substring(0,100))}</span>`:'';
       const cls=e.anomaly?' bad':(e.unexpected_binary?' warn':'');
-      let sx=`<div class="ctnode"><div class="ctrow${cls}" onclick="csToggle(this)"><span class="ctexp">${ch.length?'▸':'·'}</span><span class="ctcall" title="${esc(te.binary)} ${esc(te.args||'')}">${esc(bin)}${args}</span><span class="dim">${te.pid}</span></div>`;
-      if(ch.length)sx+=`<div class="ctkids">${ch.map(node).join('')}</div>`;
+      let sx=`<div class="ctnode"><div class="ctrow${cls}" onclick="csToggle(this)"><span class="ctexp">${ch.length?'▸':'·'}</span><span class="ctcall" title="${esc(te.binary)} ${esc(te.args||'')}">${esc(bin)}${args}</span><span class="dim">${pid}</span></div>`;
+      if(ch.length)sx+=`<div class="ctkids">${ch.map(c=>node(c,na)).join('')}</div>`;
       return sx+'</div>';
     };
-    h+=`<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">▸</span> <span class="csclass">${esc(g.name)}</span> <span class="cscount">${g.rows.length} procs</span></div><div class="cscalls">${roots.map(node).join('')}</div></div>`;
+    h+=`<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">▸</span> <span class="csclass">${esc(g.name)}</span> <span class="cscount">${g.rows.length} procs</span></div><div class="cscalls">${roots.map(e=>node(e,new Set())).join('')}</div></div>`;
   }
   return h;
 }
