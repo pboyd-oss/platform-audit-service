@@ -265,6 +265,10 @@ func handleBuilds(w http.ResponseWriter, r *http.Request) {
 		handleRecorrelate(w, r)
 		return
 	}
+	if strings.HasSuffix(path, "/groovy") {
+		handleBuildGroovy(w, r)
+		return
+	}
 	handleBuildSummary(w, r)
 }
 
@@ -391,6 +395,40 @@ func handleBuildSummary(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// handleBuildGroovy serves GET /builds/{auditId}/groovy — every GROOVY_CALLSITE class
+// (pipeline + library) with its full call list, read from the raw event stream so the
+// build summary stays lean. Powers the per-call-site drill-down in the UI.
+func handleBuildGroovy(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/builds/")
+	auditId := strings.TrimSuffix(path, "/groovy")
+	if auditId == "" || auditId == path {
+		http.Error(w, "invalid path — expected /builds/{auditId}/groovy", http.StatusBadRequest)
+		return
+	}
+	steps, err := readStepEvents(filepath.Join(dataDir, auditId, "events.ndjson"))
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	type csClass struct {
+		Origin          string     `json:"origin"`
+		Source          string     `json:"source"`
+		Clazz           string     `json:"clazz"`
+		CallCount       int        `json:"callCount"`
+		SyscallGateways int        `json:"syscallGateways"`
+		Calls           []callSite `json:"calls"`
+	}
+	out := []csClass{}
+	for _, s := range steps {
+		if s.Event == "GROOVY_CALLSITE" {
+			out = append(out, csClass{s.Origin, s.Source, s.Clazz, s.CallCount, s.SyscallGateways, s.Calls})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(out)
+}
+
 // --- Correlation ----------------------------------------------------------------
 
 type libraryRef struct {
@@ -415,6 +453,7 @@ type stepEvent struct {
 	Arguments     json.RawMessage `json:"arguments,omitempty"`
 	Origin              string     `json:"origin,omitempty"`
 	Source              string     `json:"source,omitempty"`
+	Clazz               string     `json:"clazz,omitempty"`
 	Signature           string     `json:"signature,omitempty"`
 	Provenance          string     `json:"provenance,omitempty"`
 	SyscallGateways     int        `json:"syscallGateways,omitempty"`

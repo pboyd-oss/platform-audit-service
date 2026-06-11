@@ -56,6 +56,17 @@ main{padding:20px 24px;max-width:1400px}
 .verdict.bad{background:rgba(248,81,73,.1);color:var(--red)}
 .findings{margin:0;padding-left:18px;color:var(--red);font-size:12px}
 .findings li{padding:2px 0}
+.loadcs{color:var(--blue);cursor:pointer;font-size:11px;text-transform:none;letter-spacing:0}
+.cstoolbar{padding:4px 0 10px;font-size:12px;color:var(--muted)}
+.csgrp{border:1px solid var(--border);border-radius:4px;margin-bottom:6px}
+.cshead{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px}
+.cshead:hover{background:var(--bg2)}
+.csexp{color:var(--muted);font-size:10px;width:10px}
+.csclass{font-weight:bold}
+.cssrc{color:var(--muted)}
+.cscount{color:var(--muted);font-size:11px;margin-left:auto}
+.cscalls{display:none;padding:0 10px 8px}
+.cscalls.open{display:block}
 
 /* sections */
 .sec{margin-bottom:20px}
@@ -179,6 +190,7 @@ function nav(id) {
 
 // --- build detail ---
 async function showBuild(id) {
+  window._bid = id;
   document.getElementById('back').style.display = '';
   document.getElementById('breadcrumb').textContent = id;
   const app = document.getElementById('app');
@@ -262,6 +274,8 @@ function render() {
     h += '</div>' + networkTable(filtNet) + '</div>';
   }
 
+  h += '<div class="sec"><div class="sec-title">groovy call sites <span class="loadcs" onclick="loadCallSites()">load ▸</span></div><div id="callsites"><div class="msg" style="text-align:left;padding:6px 0">click load to fetch every call site (pipeline + library) with source:line</div></div></div>';
+
   document.getElementById('app').innerHTML = h;
 }
 
@@ -293,6 +307,46 @@ function groovyPanel(d) {
 }
 
 function srcShort(p) { if (!p) return ''; const i = p.lastIndexOf('/'); return i >= 0 ? p.substring(i+1) : p; }
+
+async function loadCallSites() {
+  const box = document.getElementById('callsites');
+  if (!box) return;
+  box.innerHTML = '<div class="msg" style="text-align:left;padding:6px 0">loading…</div>';
+  try {
+    window._cs = await fetch(`/builds/${encodeURIComponent(window._bid)}/groovy`).then(r => r.json());
+    window._csSyscallOnly = false;
+    renderCallSites();
+  } catch (e) { box.innerHTML = `<div class="err">failed: ${esc(e.message)}</div>`; }
+}
+
+function csToggleSyscall() { window._csSyscallOnly = !window._csSyscallOnly; renderCallSites(); }
+
+function renderCallSites() {
+  const box = document.getElementById('callsites'); if (!box) return;
+  const data = window._cs || [];
+  if (!data.length) { box.innerHTML = '<div class="msg" style="text-align:left;padding:6px 0">no call sites for this build (recorder not active when it ran?)</div>'; return; }
+  const rows = data.slice().sort((a,b) => (b.syscallGateways - a.syscallGateways) || String(a.source).localeCompare(String(b.source)));
+  let h = `<div class="cstoolbar"><label><input type="checkbox" ${window._csSyscallOnly?'checked':''} onchange="csToggleSyscall()"> syscall gateways only</label></div>`;
+  rows.forEach((c, i) => {
+    const calls = window._csSyscallOnly ? (c.calls||[]).filter(x=>x.syscall) : (c.calls||[]);
+    if (window._csSyscallOnly && !calls.length) return;
+    const gwBadge = c.syscallGateways > 0 ? `<span class="badge by">${c.syscallGateways} syscall</span>` : '';
+    const oBadge  = `<span class="badge ${c.origin==='library'?'bm':'bg'}">${esc(c.origin)}</span>`;
+    h += `<div class="csgrp">
+      <div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')">
+        <span class="csexp">▸</span> ${oBadge} <span class="csclass">${esc(c.clazz||'')}</span>
+        <span class="cssrc">${esc(srcShort(c.source))}</span> <span class="cscount">${calls.length} calls</span> ${gwBadge}
+      </div>
+      <div class="cscalls"><table class="dtbl"><thead><tr><th>line</th><th>kind</th><th>call</th><th>syscall</th></tr></thead><tbody>`;
+    calls.forEach(x => {
+      const sc = x.syscall ? `<span class="badge by">${esc(x.syscall)}</span>` : '';
+      const rc = x.syscall ? ' class="bad"' : '';
+      h += `<tr${rc}><td class="dim">${x.line}</td><td class="dim">${esc(x.kind)}</td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}</td><td>${sc}</td></tr>`;
+    });
+    h += '</tbody></table></div></div>';
+  });
+  box.innerHTML = h;
+}
 
 function renderTree(nodes, ec, hc, nc, root) {
   if (!nodes?.length) return '';
