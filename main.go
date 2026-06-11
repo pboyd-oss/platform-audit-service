@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -508,10 +509,11 @@ type httpEvent struct {
 }
 
 type correlatedExec struct {
-	TetragonEvent tetragonEvent `json:"tetragon_event"`
-	MatchedStep   *stepEvent    `json:"matched_step,omitempty"`
-	Anomaly       bool          `json:"anomaly"`
-	AnomalyReason string        `json:"anomaly_reason,omitempty"`
+	TetragonEvent    tetragonEvent `json:"tetragon_event"`
+	MatchedStep      *stepEvent    `json:"matched_step,omitempty"`
+	Anomaly          bool          `json:"anomaly"`
+	UnexpectedBinary bool          `json:"unexpected_binary,omitempty"`
+	AnomalyReason    string        `json:"anomaly_reason,omitempty"`
 }
 
 type correlatedNetwork struct {
@@ -572,6 +574,7 @@ type correlationReport struct {
 	TotalSteps             int                 `json:"total_steps"`
 	TotalExecs             int                 `json:"total_execs"`
 	AnomalyCount           int                 `json:"anomaly_count"`
+	UnexpectedBinaryCount  int                 `json:"unexpected_binary_count"`
 	TotalGroovyCalls       int                 `json:"total_groovy_calls"`
 	SandboxViolationCount  int                 `json:"sandbox_violation_count"`
 	TotalGroovyCallSites   int                 `json:"total_groovy_call_sites"`
@@ -594,6 +597,7 @@ type correlationReport struct {
 	CorrelatedNetwork      []correlatedNetwork `json:"correlated_network,omitempty"`
 	CorrelatedFiles        []correlatedFile    `json:"correlated_files,omitempty"`
 	CorrelatedPtrace       []correlatedFile    `json:"correlated_ptrace,omitempty"`
+	Activity               *buildActivity      `json:"activity,omitempty"`
 }
 
 // buildMeta is a stripped-down correlationReport used for the build list endpoint.
@@ -603,6 +607,7 @@ type buildMeta struct {
 	TotalSteps             int    `json:"total_steps"`
 	TotalExecs             int    `json:"total_execs"`
 	AnomalyCount           int    `json:"anomaly_count"`
+	UnexpectedBinaryCount  int    `json:"unexpected_binary_count"`
 	TotalGroovyCalls       int    `json:"total_groovy_calls"`
 	SandboxViolationCount  int    `json:"sandbox_violation_count"`
 	TotalGroovyCallSites   int    `json:"total_groovy_call_sites"`
@@ -615,6 +620,233 @@ type buildMeta struct {
 	TotalFileOpens         int    `json:"total_file_opens"`
 	TotalPtrace            int    `json:"total_ptrace"`
 	InProgress             bool   `json:"in_progress,omitempty"`
+}
+
+// --- Build-activity enrichment: turn raw execs/http into a semantic provenance model ---
+
+type activitySource struct {
+	Repo   string `json:"repo,omitempty"`
+	Commit string `json:"commit,omitempty"`
+}
+type activityImage struct {
+	Ref        string `json:"ref,omitempty"`
+	Digest     string `json:"digest,omitempty"`
+	BuiltBy    string `json:"built_by,omitempty"`
+	Dockerfile string `json:"dockerfile,omitempty"`
+	Context    string `json:"context,omitempty"`
+}
+type registryOp struct {
+	Op       string `json:"op"`
+	Registry string `json:"registry"`
+	Repo     string `json:"repo"`
+	Ref      string `json:"ref,omitempty"`
+	Step     string `json:"step,omitempty"`
+}
+type signatureOp struct {
+	Image string `json:"image,omitempty"`
+	Type  string `json:"type"`
+	Key   string `json:"key,omitempty"`
+	Tlog  bool   `json:"tlog"`
+	Step  string `json:"step,omitempty"`
+}
+type scanOp struct {
+	Tool string `json:"tool"`
+	Step string `json:"step,omitempty"`
+}
+type secretExposure struct {
+	Kind  string `json:"kind"`
+	Where string `json:"where"`
+	Step  string `json:"step,omitempty"`
+}
+type buildActivity struct {
+	Source         *activitySource     `json:"source,omitempty"`
+	Images         []activityImage     `json:"images,omitempty"`
+	RegistryOps    []registryOp        `json:"registry_ops,omitempty"`
+	Signatures     []signatureOp       `json:"signatures,omitempty"`
+	Scans          []scanOp            `json:"scans,omitempty"`
+	Tools          map[string][]string `json:"tools,omitempty"`
+	Digests        []string            `json:"digests,omitempty"`
+	SecretsExposed []secretExposure    `json:"secrets_exposed,omitempty"`
+}
+
+var (
+	reSha256    = regexp.MustCompile(`sha256:[0-9a-f]{12,64}`)
+	reImageRef  = regexp.MustCompile(`([a-zA-Z0-9][a-zA-Z0-9._/-]*@sha256:[0-9a-f]{64})`)
+	reKaCtx     = regexp.MustCompile(`--context=(\S+)`)
+	reKaDf      = regexp.MustCompile(`--dockerfile=(\S+)`)
+	reKaDest    = regexp.MustCompile(`--destination=(\S+)`)
+	reCoType    = regexp.MustCompile(`--type[ =](\S+)`)
+	reCoKey     = regexp.MustCompile(`--key[ =](\S+)`)
+	reGit40     = regexp.MustCompile(`\b([0-9a-f]{40})\b`)
+	reGithub    = regexp.MustCompile(`github\.com[:/]([^/\s]+/[^/\s.]+)`)
+	reRegOp     = regexp.MustCompile(`(https?://[^/\s]+)/v2/(.+?)/(manifests|blobs)`)
+	reAuthBasic = regexp.MustCompile(`(?i)authorization: basic \S+`)
+)
+
+// Broad tool catalog: binary basename -> category. Drives the per-build tools map and the
+// scan list. High-value tools (kaniko/cosign/git) also have structured extractors below.
+var toolCatalog = map[string]string{
+	// vcs
+	"git": "vcs", "gh": "vcs", "hg": "vcs", "svn": "vcs",
+	// compile / language toolchains
+	"go": "compile", "compile": "compile", "asm": "compile", "link": "compile", "vet": "compile", "cgo": "compile",
+	"gcc": "compile", "cc": "compile", "g++": "compile", "clang": "compile", "ld": "compile", "as": "compile", "ar": "compile",
+	"make": "compile", "cmake": "compile", "ninja": "compile", "bazel": "build",
+	"javac": "compile", "java": "compile", "mvn": "compile", "maven": "compile", "gradle": "compile", "gradlew": "compile", "kotlinc": "compile",
+	"node": "compile", "npm": "compile", "npx": "compile", "yarn": "compile", "pnpm": "compile", "tsc": "compile", "webpack": "compile", "esbuild": "compile", "vite": "compile", "rollup": "compile",
+	"python": "compile", "python3": "compile", "poetry": "compile", "cargo": "compile", "rustc": "compile",
+	"dotnet": "compile", "msbuild": "compile", "ruby": "compile", "php": "compile",
+	// package managers
+	"pip": "package", "pip3": "package", "uv": "package", "nuget": "package", "bundle": "package", "gem": "package", "composer": "package",
+	"apt": "package", "apt-get": "package", "apk": "package", "yum": "package", "dnf": "package", "dpkg": "package", "rpm": "package",
+	// image build
+	"executor": "build", "kaniko": "build", "docker": "build", "dockerd": "build", "buildkitd": "build", "buildctl": "build",
+	"buildah": "build", "podman": "build", "img": "build", "ko": "build", "jib": "build", "pack": "build", "nerdctl": "build",
+	"s2i": "build", "makisu": "build", "earthly": "build", "melange": "build", "apko": "build", "skaffold": "build",
+	// registry
+	"skopeo": "registry", "crane": "registry", "gcrane": "registry", "oras": "registry", "regctl": "registry", "reg": "registry",
+	// sign / attest
+	"cosign": "sign", "notation": "sign", "gpg": "sign", "gpg2": "sign", "slsa-generator": "sign", "witness": "sign", "rekor-cli": "sign", "in-toto": "sign",
+	// sbom
+	"syft": "sbom", "cdxgen": "sbom", "bom": "sbom",
+	// scan / security
+	"trivy": "scan", "grype": "scan", "snyk": "scan", "clair": "scan", "clairctl": "scan", "anchore": "scan",
+	"checkov": "scan", "tfsec": "scan", "terrascan": "scan", "kics": "scan", "conftest": "scan", "opa": "scan", "regula": "scan",
+	"semgrep": "scan", "bandit": "scan", "gosec": "scan", "staticcheck": "scan", "golangci-lint": "scan", "spotbugs": "scan", "brakeman": "scan",
+	"gitleaks": "scan", "trufflehog": "scan", "detect-secrets": "scan",
+	"hadolint": "scan", "dockle": "scan", "kube-score": "scan", "kubesec": "scan", "kubeaudit": "scan", "polaris": "scan", "kube-bench": "scan", "kube-linter": "scan",
+	"dependency-check": "scan", "osv-scanner": "scan", "nancy": "scan", "retire": "scan", "safety": "scan",
+	// deploy / iac
+	"kubectl": "deploy", "helm": "deploy", "kustomize": "deploy", "argocd": "deploy", "flux": "deploy", "kapp": "deploy", "kompose": "deploy",
+	"terraform": "iac", "terragrunt": "iac", "tofu": "iac", "ansible": "iac", "ansible-playbook": "iac", "pulumi": "iac", "packer": "iac",
+	"vault": "iac", "aws": "iac", "gcloud": "iac", "az": "iac",
+	// test
+	"pytest": "test", "jest": "test", "mocha": "test", "gotestsum": "test", "ginkgo": "test", "cypress": "test", "playwright": "test",
+}
+
+func stepName(s *stepEvent) string {
+	if s != nil {
+		return s.StepName
+	}
+	return ""
+}
+
+func enrichActivity(execs []correlatedExec, https []correlatedHttp) *buildActivity {
+	a := &buildActivity{Tools: map[string][]string{}}
+	digSet := map[string]bool{}
+	toolSet := map[string]map[string]bool{}
+	seenScan := map[string]bool{}
+	addTool := func(cat, t string) {
+		if toolSet[cat] == nil {
+			toolSet[cat] = map[string]bool{}
+		}
+		toolSet[cat][t] = true
+	}
+	for _, ce := range execs {
+		te := ce.TetragonEvent
+		b := te.Binary
+		base := b[strings.LastIndex(b, "/")+1:]
+		args := te.Args
+		step := stepName(ce.MatchedStep)
+		for _, m := range reSha256.FindAllString(args, -1) {
+			digSet[m] = true
+		}
+		if cat := toolCatalog[base]; cat != "" {
+			addTool(cat, base)
+			if cat == "scan" && !seenScan[base] {
+				seenScan[base] = true
+				a.Scans = append(a.Scans, scanOp{Tool: base, Step: step})
+			}
+		}
+		switch {
+		case base == "executor" || strings.Contains(b, "kaniko"):
+			addTool("build", "kaniko")
+			img := activityImage{BuiltBy: "kaniko"}
+			if m := reKaCtx.FindStringSubmatch(args); m != nil {
+				img.Context = m[1]
+			}
+			if m := reKaDf.FindStringSubmatch(args); m != nil {
+				img.Dockerfile = m[1]
+			}
+			if m := reKaDest.FindStringSubmatch(args); m != nil {
+				img.Ref = m[1]
+			}
+			a.Images = append(a.Images, img)
+		case strings.Contains(base, "cosign") || base == "notation":
+			sig := signatureOp{Step: step, Type: "signature", Tlog: !strings.Contains(args, "tlog-upload=false")}
+			if strings.Contains(args, "attest") {
+				sig.Type = "attestation"
+			}
+			if m := reCoType.FindStringSubmatch(args); m != nil {
+				sig.Type = m[1]
+			}
+			if m := reCoKey.FindStringSubmatch(args); m != nil {
+				sig.Key = m[1]
+			}
+			if m := reImageRef.FindStringSubmatch(args); m != nil {
+				sig.Image = m[1]
+			}
+			a.Signatures = append(a.Signatures, sig)
+		case base == "git":
+			if a.Source == nil {
+				a.Source = &activitySource{}
+			}
+			if m := reGit40.FindStringSubmatch(args); m != nil && a.Source.Commit == "" {
+				a.Source.Commit = m[1]
+			}
+		}
+		if reAuthBasic.MatchString(args) {
+			a.SecretsExposed = append(a.SecretsExposed, secretExposure{Kind: "basic-auth-credential", Where: base, Step: step})
+		}
+	}
+	seenReg := map[string]bool{}
+	for _, ch := range https {
+		he := ch.HttpEvent
+		url := he.URL
+		step := stepName(ch.MatchedStep)
+		for _, m := range reSha256.FindAllString(url, -1) {
+			digSet[m] = true
+		}
+		if m := reRegOp.FindStringSubmatch(url); m != nil {
+			op := registryOp{Registry: m[1], Repo: m[2], Step: step, Op: "pull"}
+			if he.Method == "PUT" || he.Method == "PATCH" || (strings.Contains(url, "scope=") && strings.Contains(url, "push")) {
+				op.Op = "push"
+			}
+			if dg := reSha256.FindString(url); dg != "" {
+				op.Ref = dg
+			}
+			k := op.Op + "|" + op.Repo + "|" + op.Ref
+			if !seenReg[k] {
+				seenReg[k] = true
+				a.RegistryOps = append(a.RegistryOps, op)
+			}
+		}
+		if m := reGithub.FindStringSubmatch(url); m != nil {
+			if a.Source == nil {
+				a.Source = &activitySource{}
+			}
+			if a.Source.Repo == "" {
+				a.Source.Repo = m[1]
+			}
+		}
+	}
+	for d := range digSet {
+		a.Digests = append(a.Digests, d)
+	}
+	sort.Strings(a.Digests)
+	for cat, set := range toolSet {
+		for t := range set {
+			a.Tools[cat] = append(a.Tools[cat], t)
+		}
+		sort.Strings(a.Tools[cat])
+	}
+	if len(a.Digests) > 80 {
+		a.Digests = a.Digests[:80]
+	}
+	if a.Source == nil && len(a.Images) == 0 && len(a.Signatures) == 0 && len(a.Tools) == 0 {
+		return nil
+	}
+	return a
 }
 
 func correlate(auditId string, wait bool) {
@@ -753,6 +985,7 @@ func correlate(auditId string, wait bool) {
 	var correlatedFiles []correlatedFile
 	var correlatedPtrace []correlatedFile
 	var anomalies []map[string]any
+	var unexpectedBinaries []map[string]any
 
 	for _, te := range tetEvents {
 		if te.EventType == "network" {
@@ -877,9 +1110,12 @@ func correlate(auditId string, wait bool) {
 				continue
 			}
 			if !isWhitelisted(ce.TetragonEvent.Binary, ce.MatchedStep.StepName) {
-				ce.Anomaly = true
+				// Observability only — NOT an anomaly. The per-step binary whitelist can't
+				// enumerate every toolchain sub-binary a build forks, so this does NOT feed
+				// AnomalyCount (the hard attest gate). See unexpected_binary_count.
+				ce.UnexpectedBinary = true
 				ce.AnomalyReason = fmt.Sprintf("binary %s not in whitelist for step %s", ce.TetragonEvent.Binary, ce.MatchedStep.StepName)
-				anomalies = append(anomalies, map[string]any{
+				unexpectedBinaries = append(unexpectedBinaries, map[string]any{
 					"audit_id": auditId,
 					"type":     "unexpected_binary",
 					"binary":   ce.TetragonEvent.Binary,
@@ -923,6 +1159,7 @@ func correlate(auditId string, wait bool) {
 		TotalSteps:             len(windows),
 		TotalExecs:             len(correlated),
 		AnomalyCount:           len(anomalies),
+		UnexpectedBinaryCount:  len(unexpectedBinaries),
 		TotalGroovyCalls:       groovyCalls,
 		SandboxViolationCount:  sandboxViolations,
 		TotalGroovyCallSites:   groovyCallSites,
@@ -947,6 +1184,7 @@ func correlate(auditId string, wait bool) {
 		CorrelatedPtrace:       correlatedPtrace,
 	}
 
+	report.Activity = enrichActivity(correlated, correlHttp)
 	writeJSON(filepath.Join(buildDir, "correlated.json"), report)
 	if len(anomalies) > 0 {
 		writeJSON(filepath.Join(buildDir, "anomalies.json"), anomalies)

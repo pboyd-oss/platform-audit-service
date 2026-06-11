@@ -77,6 +77,12 @@ main{padding:20px 24px;max-width:1400px}
 .ctnode.open>.ctrow .ctexp{color:var(--blue)}
 .ctline{color:var(--muted);min-width:30px;font-size:11px;text-align:right}
 .ctcall{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
+.ctrow.warn{background:rgba(210,153,34,.12)}
+.prov{padding:6px 4px;font-size:13px}
+.provrow{display:flex;gap:10px;padding:3px 0;align-items:baseline}
+.provrow.bad .provk{color:var(--red)}
+.provk{min-width:64px;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding-top:2px}
+.provv{font-family:monospace;word-break:break-all}
 
 /* sections */
 .sec{margin-bottom:20px}
@@ -231,6 +237,7 @@ function render() {
 
   const blkCls   = d.blocked_http_requests > 0 ? ' yellow' : '';
   const anomCls  = d.anomaly_count > 0 ? ' red' : '';
+  const ubCls    = d.unexpected_binary_count > 0 ? ' yellow' : '';
   const netCls   = d.unexpected_network_count > 0 ? ' red' : '';
   const denCls   = d.sandbox_violation_count > 0 ? ' red' : '';
   const gwCls    = d.syscall_gateway_count > 0 ? ' yellow' : '';
@@ -250,6 +257,7 @@ function render() {
     <div><div class="stat-label">files</div><div class="stat-val${fileCls}">${d.total_file_opens||0}</div></div>
     <div><div class="stat-label">ptrace</div><div class="stat-val${ptrCls}">${d.total_ptrace||0}</div></div>
     <div><div class="stat-label">anomalies</div><div class="stat-val${anomCls}">${d.anomaly_count}</div></div>
+    <div><div class="stat-label">unexp-bin</div><div class="stat-val${ubCls}">${d.unexpected_binary_count||0}</div></div>
     <div><div class="stat-label">groovy</div><div class="stat-val">${d.total_groovy_calls||0}</div></div>
     <div><div class="stat-label">denied</div><div class="stat-val${denCls}">${d.sandbox_violation_count||0}</div></div>
     <div><div class="stat-label">call-sites</div><div class="stat-val">${d.total_groovy_call_sites||0}</div></div>
@@ -258,6 +266,7 @@ function render() {
     <div><div class="stat-label">runtime</div><div class="stat-val">${d.total_groovy_runtime_calls||0}</div></div>
   </div>`;
 
+  h += renderActivity(d.activity);
   h += groovyPanel(d);
 
   // step tree
@@ -270,7 +279,7 @@ function render() {
   const filtExecs = _filter ? execs.filter(e => e.matched_step?.nodeId === _filter) : execs;
   h += '<div class="sec"><div class="sec-title">exec events';
   if (_filter) h += ` <span class="filter-info">${filtExecs.length} of ${execs.length}</span>`;
-  h += '</div>' + execTable(filtExecs) + '</div>';
+  h += '</div>' + execTree(filtExecs) + '</div>';
 
   // http
   if (http.length > 0) {
@@ -419,6 +428,55 @@ function renderTree(nodes, ec, hc, nc, root) {
   return h;
 }
 
+function renderActivity(a) {
+  if (!a) return '';
+  let h = '<div class="sec"><div class="sec-title">build provenance</div><div class="prov">';
+  if (a.source) h += `<div class="provrow"><span class="provk">source</span><span class="provv">${esc(a.source.repo||'?')}${a.source.commit?(' @ '+esc(a.source.commit.substring(0,12))):''}</span></div>`;
+  (a.images||[]).forEach(im=>{
+    const dg = im.digest?(' '+esc(im.digest.substring(0,19))+'…'):'';
+    const df = im.dockerfile?(' · '+esc(im.dockerfile)):'';
+    h += `<div class="provrow"><span class="provk">image</span><span class="provv">${esc(im.ref||'(built)')}${dg} <span class="dim">via ${esc(im.built_by||'?')}${df}</span></span></div>`;
+  });
+  (a.signatures||[]).forEach(sg=>{
+    h += `<div class="provrow"><span class="provk">sign</span><span class="provv">${esc(sg.type)} <span class="dim">${esc((sg.image||'').replace(/@sha256:.*/,''))} · ${sg.tlog?'tlog':'no-tlog'}</span></span></div>`;
+  });
+  (a.registry_ops||[]).filter(o=>o.op==='push').forEach(o=>{
+    h += `<div class="provrow"><span class="provk">push</span><span class="provv">${esc(o.registry)}/${esc(o.repo)}${o.ref?(' '+esc(o.ref.substring(0,19))+'…'):''}</span></div>`;
+  });
+  if ((a.scans||[]).length) h += `<div class="provrow"><span class="provk">scan</span><span class="provv">${[...new Set(a.scans.map(x=>x.tool))].map(esc).join(', ')}</span></div>`;
+  if (a.tools) { const t=Object.entries(a.tools).map(([k,v])=>`<b>${esc(k)}</b>:${v.map(esc).join(',')}`).join('  ·  '); h += `<div class="provrow"><span class="provk">tools</span><span class="provv dim">${t}</span></div>`; }
+  (a.secrets_exposed||[]).forEach(se=>{ h += `<div class="provrow bad"><span class="provk">⚠ secret</span><span class="provv">${esc(se.kind)} in ${esc(se.where)} args <span class="dim">${esc(se.step||'')}</span></span></div>`; });
+  if ((a.digests||[]).length) h += `<div class="provrow"><span class="provk">digests</span><span class="provv dim">${a.digests.length} distinct sha256 (${esc((a.digests[0]||'').substring(0,19))}…)</span></div>`;
+  h += '</div></div>';
+  return h;
+}
+function execTree(rows) {
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
+  const groups={}, order=[];
+  for (const e of rows) {
+    const k=(e.matched_step&&e.matched_step.nodeId)||'_out';
+    if(!groups[k]){groups[k]={name:(e.matched_step&&e.matched_step.stepName)||'⚠ outside steps',rows:[]};order.push(k);}
+    groups[k].rows.push(e);
+  }
+  let h='';
+  for(const k of order){
+    const g=groups[k];
+    const byPid={}; g.rows.forEach(e=>byPid[e.tetragon_event.pid]=e);
+    const kids={}; const roots=[];
+    g.rows.forEach(e=>{const pp=e.tetragon_event.parent_pid; if(pp&&byPid[pp])(kids[pp]=kids[pp]||[]).push(e); else roots.push(e);});
+    const node=(e)=>{
+      const te=e.tetragon_event; const ch=kids[te.pid]||[];
+      const bin=(te.binary||'').split('/').pop();
+      const args=te.args?` <span class="dim">${esc((te.args||'').substring(0,100))}</span>`:'';
+      const cls=e.anomaly?' bad':(e.unexpected_binary?' warn':'');
+      let sx=`<div class="ctnode"><div class="ctrow${cls}" onclick="csToggle(this)"><span class="ctexp">${ch.length?'▸':'·'}</span><span class="ctcall" title="${esc(te.binary)} ${esc(te.args||'')}">${esc(bin)}${args}</span><span class="dim">${te.pid}</span></div>`;
+      if(ch.length)sx+=`<div class="ctkids">${ch.map(node).join('')}</div>`;
+      return sx+'</div>';
+    };
+    h+=`<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">▸</span> <span class="csclass">${esc(g.name)}</span> <span class="cscount">${g.rows.length} procs</span></div><div class="cscalls">${roots.map(node).join('')}</div></div>`;
+  }
+  return h;
+}
 function execTable(rows) {
   if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
   let h = `<table class="dtbl"><thead><tr>
