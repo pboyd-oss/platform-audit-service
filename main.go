@@ -257,6 +257,128 @@ func handleIngestHttp(w http.ResponseWriter, r *http.Request) {
 
 // handleBuilds routes GET /builds/ (list), GET /builds/{id}/summary (detail),
 // and POST /builds/{id}/recorrelate (re-run correlation).
+// --- #1 Cross-job chain stitch: link builds by upstream-trigger cause (name/topology-agnostic) ---
+
+var reUpstream = regexp.MustCompile(`upstream project "?([^"]+?)"? build (?:number )?#?(\d+)`)
+
+func parentAuditId(triggeredBy []string) string {
+	for _, t := range triggeredBy {
+		if m := reUpstream.FindStringSubmatch(t); m != nil {
+			return strings.ReplaceAll(m[1], "/", "_") + "_" + m[2]
+		}
+	}
+	return ""
+}
+
+func buildParent(auditId string) string {
+	f, err := os.Open(filepath.Join(dataDir, auditId, "events.ndjson"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		var e stepEvent
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			continue
+		}
+		if e.Event == "BUILD_START" {
+			return parentAuditId(e.TriggeredBy)
+		}
+	}
+	return ""
+}
+
+type chainNode struct {
+	AuditId     string              `json:"audit_id"`
+	Parent      string              `json:"parent,omitempty"`
+	GeneratedAt string              `json:"generated_at,omitempty"`
+	InProgress  bool                `json:"in_progress,omitempty"`
+	Tools       map[string][]string `json:"tools,omitempty"`
+	Images      int                 `json:"images,omitempty"`
+	Signed      int                 `json:"signed,omitempty"`
+	Pushed      bool                `json:"pushed,omitempty"`
+}
+
+func chainMeta(id, parent string) chainNode {
+	n := chainNode{AuditId: id, Parent: parent}
+	data, err := os.ReadFile(filepath.Join(dataDir, id, "correlated.json"))
+	if err != nil {
+		n.InProgress = true
+		return n
+	}
+	var rep struct {
+		GeneratedAt string         `json:"generated_at"`
+		InProgress  bool           `json:"in_progress"`
+		Activity    *buildActivity `json:"activity"`
+	}
+	json.Unmarshal(data, &rep)
+	n.GeneratedAt = rep.GeneratedAt
+	n.InProgress = rep.InProgress
+	if rep.Activity != nil {
+		n.Tools = rep.Activity.Tools
+		n.Images = len(rep.Activity.Images)
+		n.Signed = len(rep.Activity.Signatures)
+		for _, o := range rep.Activity.RegistryOps {
+			if o.Op == "push" {
+				n.Pushed = true
+			}
+		}
+	}
+	return n
+}
+
+func handleBuildChain(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/builds/")
+	auditId := strings.TrimSuffix(path, "/chain")
+	entries, _ := os.ReadDir(dataDir)
+	parent := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			parent[e.Name()] = buildParent(e.Name())
+		}
+	}
+	if _, ok := parent[auditId]; !ok {
+		parent[auditId] = ""
+	}
+	root := auditId
+	for i := 0; i < 20; i++ {
+		p := parent[root]
+		if p == "" || p == root {
+			break
+		}
+		if _, ok := parent[p]; !ok {
+			break
+		}
+		root = p
+	}
+	children := map[string][]string{}
+	for c, p := range parent {
+		if p != "" {
+			children[p] = append(children[p], c)
+		}
+	}
+	var chain []chainNode
+	visited := map[string]bool{}
+	queue := []string{root}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		chain = append(chain, chainMeta(id, parent[id]))
+		cs := children[id]
+		sort.Strings(cs)
+		queue = append(queue, cs...)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(chain)
+}
+
 func handleBuilds(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/builds/")
 	if path == "" {
@@ -269,6 +391,10 @@ func handleBuilds(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(path, "/groovy") {
 		handleBuildGroovy(w, r)
+		return
+	}
+	if strings.HasSuffix(path, "/chain") {
+		handleBuildChain(w, r)
 		return
 	}
 	handleBuildSummary(w, r)
@@ -382,7 +508,14 @@ func handleBuildSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := os.ReadFile(filepath.Join(dataDir, auditId, "correlated.json"))
+	buildDir := filepath.Join(dataDir, auditId)
+	evInfo, evErr := os.Stat(filepath.Join(buildDir, "events.ndjson"))
+	corInfo, corErr := os.Stat(filepath.Join(buildDir, "correlated.json"))
+	if evErr == nil && (corErr != nil || evInfo.ModTime().After(corInfo.ModTime())) {
+		correlate(auditId, false) // re-correlate on read so a mid-flight view reflects the full event set
+	}
+
+	data, err := os.ReadFile(filepath.Join(buildDir, "correlated.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "not found — build may not have ended yet", http.StatusNotFound)
@@ -448,6 +581,7 @@ type stepEvent struct {
 	FunctionName  string          `json:"functionName"`
 	TS            int64           `json:"ts"`
 	Result        string          `json:"result"`
+	TriggeredBy   []string        `json:"triggeredBy,omitempty"`
 	DurationMs    *int64          `json:"durationMs,omitempty"`
 	EnclosingIds  []string        `json:"enclosingIds,omitempty"`
 	LibrarySource *libraryRef     `json:"librarySource,omitempty"`
@@ -571,6 +705,7 @@ type syscallSite struct {
 type correlationReport struct {
 	AuditId                string              `json:"audit_id"`
 	GeneratedAt            string              `json:"generated_at"`
+	InProgress             bool                `json:"in_progress,omitempty"`
 	TotalSteps             int                 `json:"total_steps"`
 	TotalExecs             int                 `json:"total_execs"`
 	AnomalyCount           int                 `json:"anomaly_count"`
@@ -1153,8 +1288,16 @@ func correlate(auditId string, wait bool) {
 		}
 	}
 
+	sawBuildEnd := false
+	for i := range steps {
+		if steps[i].Event == "BUILD_END" {
+			sawBuildEnd = true
+			break
+		}
+	}
 	report := correlationReport{
 		AuditId:                auditId,
+		InProgress:             !sawBuildEnd,
 		GeneratedAt:            time.Now().UTC().Format(time.RFC3339Nano),
 		TotalSteps:             len(windows),
 		TotalExecs:             len(correlated),

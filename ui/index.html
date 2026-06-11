@@ -83,6 +83,16 @@ main{padding:20px 24px;max-width:1400px}
 .provrow.bad .provk{color:var(--red)}
 .provk{min-width:64px;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding-top:2px}
 .provv{font-family:monospace;word-break:break-all}
+.chainwrap{margin:0 0 12px}
+.chainlbl{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
+.chain{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chainnode{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;cursor:pointer;font-size:12px;background:var(--bg2)}
+.chainnode:hover{border-color:var(--blue)}
+.chainnode.cur{border-color:var(--blue);background:rgba(88,166,255,.12)}
+.chainrole{font-weight:600}
+.chainacts{color:var(--muted);font-size:10px}
+.chainarrow{color:var(--muted)}
+.inprog-banner{background:rgba(210,153,34,.12);border:1px solid #d29922;border-radius:5px;padding:6px 10px;font-size:12px;margin-bottom:10px}
 
 /* sections */
 .sec{margin-bottom:20px}
@@ -205,6 +215,29 @@ function nav(id) {
 }
 
 // --- build detail ---
+async function loadChain(id) {
+  try {
+    const chain = await fetch(`/builds/${encodeURIComponent(id)}/chain`).then(r => r.json());
+    const box = document.getElementById('chainstrip');
+    if (!box) return;
+    if (!chain || chain.length < 2) { box.innerHTML = ''; return; }
+    let h = '<div class="chainwrap"><div class="chainlbl">delivery chain (' + chain.length + ' jobs)</div><div class="chain">';
+    chain.forEach((n, i) => {
+      const cur = n.audit_id === id ? ' cur' : '';
+      const parts = parseId(n.audit_id);
+      const role = String(parts[0]).split('/').pop();
+      const acts = [];
+      if (n.images) acts.push(n.images + 'img');
+      if (n.signed) acts.push('signed');
+      if (n.pushed) acts.push('push');
+      if (n.in_progress) acts.push('\u2026');
+      h += (i ? '<span class="chainarrow">\u2192</span>' : '') +
+        `<span class="chainnode${cur}" onclick="nav('${esc(n.audit_id)}')" title="${esc(n.audit_id)}"><span class="chainrole">${esc(role)}</span> <span class="bnum">#${esc(parts[1])}</span>${acts.length ? '<span class="chainacts">' + esc(acts.join(' ')) + '</span>' : ''}</span>`;
+    });
+    h += '</div></div>';
+    box.innerHTML = h;
+  } catch (e) {}
+}
 async function showBuild(id) {
   window._bid = id;
   document.getElementById('back').style.display = '';
@@ -218,6 +251,7 @@ async function showBuild(id) {
     });
     _data = d;
     render();
+    loadChain(id);
   } catch(e) {
     app.innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
@@ -247,7 +281,9 @@ function render() {
   if (d.jenkinsfile_approved === true)  { jfTxt = '✓'; jfCls = ' green'; }
   else if (d.jenkinsfile_approved === false) { jfTxt = '✗'; jfCls = ' red'; }
 
-  let h = `<div class="stats">
+  let h = `<div id="chainstrip"></div>`;
+  if (d.in_progress) h += `<div class="inprog-banner">\u23f3 in progress — this view re-correlates on each load and updates as the build runs</div>`;
+  h += `<div class="stats">
     <div><div class="stat-label">steps</div><div class="stat-val">${d.total_steps}</div></div>
     <div><div class="stat-label">execs</div><div class="stat-val">${d.total_execs}</div></div>
     <div><div class="stat-label">http</div><div class="stat-val">${d.total_http_requests||0}</div></div>
