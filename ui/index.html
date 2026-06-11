@@ -224,6 +224,8 @@ function render() {
   const netCls   = d.unexpected_network_count > 0 ? ' red' : '';
   const denCls   = d.sandbox_violation_count > 0 ? ' red' : '';
   const gwCls    = d.syscall_gateway_count > 0 ? ' yellow' : '';
+  const fileCls  = d.total_file_opens > 0 ? ' yellow' : '';
+  const ptrCls   = d.total_ptrace > 0 ? ' red' : '';
   let jfTxt = '—', jfCls = '';
   if (d.jenkinsfile_approved === true)  { jfTxt = '✓'; jfCls = ' green'; }
   else if (d.jenkinsfile_approved === false) { jfTxt = '✗'; jfCls = ' red'; }
@@ -235,6 +237,8 @@ function render() {
     <div><div class="stat-label">blocked</div><div class="stat-val${blkCls}">${d.blocked_http_requests||0}</div></div>
     <div><div class="stat-label">network</div><div class="stat-val">${d.total_network_events||0}</div></div>
     <div><div class="stat-label">unexpected</div><div class="stat-val${netCls}">${d.unexpected_network_count||0}</div></div>
+    <div><div class="stat-label">files</div><div class="stat-val${fileCls}">${d.total_file_opens||0}</div></div>
+    <div><div class="stat-label">ptrace</div><div class="stat-val${ptrCls}">${d.total_ptrace||0}</div></div>
     <div><div class="stat-label">anomalies</div><div class="stat-val${anomCls}">${d.anomaly_count}</div></div>
     <div><div class="stat-label">groovy</div><div class="stat-val">${d.total_groovy_calls||0}</div></div>
     <div><div class="stat-label">denied</div><div class="stat-val${denCls}">${d.sandbox_violation_count||0}</div></div>
@@ -274,6 +278,11 @@ function render() {
     h += '</div>' + networkTable(filtNet) + '</div>';
   }
 
+  const files = d.correlated_files || [];
+  if (files.length > 0) h += '<div class="sec"><div class="sec-title">file access <span class="badge by">'+files.length+'</span></div>' + fileTable(files) + '</div>';
+  const ptrace = d.correlated_ptrace || [];
+  if (ptrace.length > 0) h += '<div class="sec"><div class="sec-title">ptrace <span class="badge br">'+ptrace.length+'</span></div>' + ptraceTable(ptrace) + '</div>';
+
   h += '<div class="sec"><div class="sec-title">groovy call sites <span class="loadcs" onclick="loadCallSites()">load ▸</span></div><div id="callsites"><div class="msg" style="text-align:left;padding:6px 0">click load to fetch every call site (pipeline + library) with source:line</div></div></div>';
 
   document.getElementById('app').innerHTML = h;
@@ -300,7 +309,7 @@ function groovyPanel(d) {
   if (gw.length) {
     h += '<div class="sec"><div class="sec-title">syscall gateways <span class="badge by">'+gw.length+'</span></div>';
     h += '<table class="dtbl"><thead><tr><th>syscall</th><th>call</th><th>origin</th><th>source</th></tr></thead><tbody>';
-    h += gw.map(x=>`<tr><td><span class="badge by">${esc(x.syscall)}</span></td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}</td><td class="dim">${esc(x.origin)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`).join('');
+    h += gw.map(x=>{const a=(x.args&&x.args.length)?'('+x.args.map(z=>esc(z)).join(', ')+')':'';return `<tr><td><span class="badge by">${esc(x.syscall)}</span></td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td class="dim">${esc(x.origin)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`;}).join('');
     h += '</tbody></table></div>';
   }
   return h;
@@ -341,7 +350,8 @@ function renderCallSites() {
     calls.forEach(x => {
       const sc = x.syscall ? `<span class="badge by">${esc(x.syscall)}</span>` : '';
       const rc = x.syscall ? ' class="bad"' : '';
-      h += `<tr${rc}><td class="dim">${x.line}</td><td class="dim">${esc(x.kind)}</td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}</td><td>${sc}</td></tr>`;
+      const a = (x.args&&x.args.length) ? '('+x.args.map(z=>esc(z)).join(', ')+')' : '';
+      h += `<tr${rc}><td class="dim">${x.line}</td><td class="dim">${esc(x.kind)}</td><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td>${sc}</td></tr>`;
     });
     h += '</tbody></table></div></div>';
   });
@@ -414,6 +424,24 @@ function httpTable(rows) {
       <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
       <td class="dim">${fmtTime(he.ts)}</td>
     </tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function fileTable(rows) {
+  let h = `<table class="dtbl"><thead><tr><th>path</th><th>binary</th><th>step</th><th>time</th></tr></thead><tbody>`;
+  for (const e of rows) {
+    const te = e.tetragon_event, step = e.matched_step?.stepName || '⚠ outside steps';
+    h += `<tr><td title="${esc(te.path)}">${esc(te.path||'')}</td><td class="dim" title="${esc(te.binary)}">${esc((te.binary||'').split('/').pop())}</td><td class="dim" title="${esc(step)}">${esc(step.substring(0,40))}</td><td class="dim">${fmtTime(te.ts)}</td></tr>`;
+  }
+  return h + '</tbody></table>';
+}
+
+function ptraceTable(rows) {
+  let h = `<table class="dtbl"><thead><tr><th>binary</th><th>args</th><th>step</th><th>time</th></tr></thead><tbody>`;
+  for (const e of rows) {
+    const te = e.tetragon_event, step = e.matched_step?.stepName || '⚠ outside steps';
+    h += `<tr class="bad"><td title="${esc(te.binary)}">${esc(te.binary||'')}</td><td title="${esc(te.args)}">${esc((te.args||'').substring(0,80))}</td><td class="dim">${esc(step.substring(0,40))}</td><td class="dim">${fmtTime(te.ts)}</td></tr>`;
   }
   return h + '</tbody></table>';
 }

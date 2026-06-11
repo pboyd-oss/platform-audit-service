@@ -515,6 +515,11 @@ type correlatedNetwork struct {
 	AnomalyReason string        `json:"anomaly_reason,omitempty"`
 }
 
+type correlatedFile struct {
+	TetragonEvent tetragonEvent `json:"tetragon_event"`
+	MatchedStep   *stepEvent    `json:"matched_step,omitempty"`
+}
+
 type correlatedHttp struct {
 	HttpEvent   httpEvent  `json:"http_event"`
 	MatchedStep *stepEvent `json:"matched_step,omitempty"`
@@ -523,9 +528,10 @@ type correlatedHttp struct {
 type callSite struct {
 	Line    int    `json:"line"`
 	Kind    string `json:"kind"`
-	Target  string `json:"target"`
-	Method  string `json:"method"`
-	Syscall string `json:"syscall,omitempty"`
+	Target  string   `json:"target"`
+	Method  string   `json:"method"`
+	Syscall string   `json:"syscall,omitempty"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type groovyDeny struct {
@@ -534,12 +540,13 @@ type groovyDeny struct {
 }
 
 type syscallSite struct {
-	Origin  string `json:"origin"`
-	Source  string `json:"source"`
-	Line    int    `json:"line"`
-	Target  string `json:"target"`
-	Method  string `json:"method"`
-	Syscall string `json:"syscall"`
+	Origin  string   `json:"origin"`
+	Source  string   `json:"source"`
+	Line    int      `json:"line"`
+	Target  string   `json:"target"`
+	Method  string   `json:"method"`
+	Syscall string   `json:"syscall"`
+	Args    []string `json:"args,omitempty"`
 }
 
 type correlationReport struct {
@@ -560,10 +567,14 @@ type correlationReport struct {
 	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
 	TotalNetworkEvents     int                 `json:"total_network_events"`
 	UnexpectedNetworkCount int                 `json:"unexpected_network_count"`
+	TotalFileOpens         int                 `json:"total_file_opens"`
+	TotalPtrace            int                 `json:"total_ptrace"`
 	StepTree               []*stepNode         `json:"step_tree"`
 	CorrelatedExecs        []correlatedExec    `json:"correlated_execs"`
 	CorrelatedHttp         []correlatedHttp    `json:"correlated_http,omitempty"`
 	CorrelatedNetwork      []correlatedNetwork `json:"correlated_network,omitempty"`
+	CorrelatedFiles        []correlatedFile    `json:"correlated_files,omitempty"`
+	CorrelatedPtrace       []correlatedFile    `json:"correlated_ptrace,omitempty"`
 }
 
 // buildMeta is a stripped-down correlationReport used for the build list endpoint.
@@ -581,6 +592,8 @@ type buildMeta struct {
 	BlockedHttpRequests    int    `json:"blocked_http_requests"`
 	TotalNetworkEvents     int    `json:"total_network_events"`
 	UnexpectedNetworkCount int    `json:"unexpected_network_count"`
+	TotalFileOpens         int    `json:"total_file_opens"`
+	TotalPtrace            int    `json:"total_ptrace"`
 	InProgress             bool   `json:"in_progress,omitempty"`
 }
 
@@ -625,7 +638,7 @@ func correlate(auditId string, wait bool) {
 				if c.Syscall != "" && len(syscallSites) < 300 {
 					syscallSites = append(syscallSites, syscallSite{
 						Origin: s.Origin, Source: s.Source, Line: c.Line,
-						Target: c.Target, Method: c.Method, Syscall: c.Syscall})
+						Target: c.Target, Method: c.Method, Syscall: c.Syscall, Args: c.Args})
 				}
 			}
 		case "JENKINSFILE_ANALYSIS":
@@ -690,6 +703,8 @@ func correlate(auditId string, wait bool) {
 
 	var correlated []correlatedExec
 	var correlatedNet []correlatedNetwork
+	var correlatedFiles []correlatedFile
+	var correlatedPtrace []correlatedFile
 	var anomalies []map[string]any
 
 	for _, te := range tetEvents {
@@ -732,6 +747,7 @@ func correlate(auditId string, wait bool) {
 				"summary": fmt.Sprintf("ptrace during build %s by %s", auditId, te.Binary),
 				"description": "A process attached to another via ptrace during the build — possible memory/credential scraping.",
 			})
+			correlatedPtrace = append(correlatedPtrace, correlatedFile{TetragonEvent: te, MatchedStep: matchStep(te.TS)})
 			continue
 		}
 		if te.EventType == "file_open" {
@@ -744,6 +760,7 @@ func correlate(auditId string, wait bool) {
 				"summary": fmt.Sprintf("Sensitive file access during build %s: %s", auditId, te.Path),
 				"description": "Build pod opened a credential-bearing path. Review before enabling as a hard gate.",
 			})
+			correlatedFiles = append(correlatedFiles, correlatedFile{TetragonEvent: te, MatchedStep: matchStep(te.TS)})
 			continue
 		}
 		ce := correlatedExec{TetragonEvent: te}
@@ -871,10 +888,14 @@ func correlate(auditId string, wait bool) {
 		BlockedHttpRequests:    blockedCount,
 		TotalNetworkEvents:     len(correlatedNet),
 		UnexpectedNetworkCount: unexpectedNetCount,
+		TotalFileOpens:         len(correlatedFiles),
+		TotalPtrace:            len(correlatedPtrace),
 		StepTree:               buildStepTree(steps),
 		CorrelatedExecs:        correlated,
 		CorrelatedHttp:         correlHttp,
 		CorrelatedNetwork:      correlatedNet,
+		CorrelatedFiles:        correlatedFiles,
+		CorrelatedPtrace:       correlatedPtrace,
 	}
 
 	writeJSON(filepath.Join(buildDir, "correlated.json"), report)
