@@ -134,12 +134,26 @@ main{padding:20px 24px;max-width:1400px}
 
 .msg{color:var(--muted);padding:20px 0;text-align:center;font-size:12px}
 .err{color:var(--red);padding:20px 0;font-size:12px}
+#patbtn{cursor:pointer;color:var(--muted);font-size:12px;margin-left:14px}
+#patbtn:hover{color:var(--blue)}
+.patq{width:100%;box-sizing:border-box;padding:7px 10px;margin:6px 0 12px;background:var(--bg2);border:1px solid var(--border);border-radius:5px;color:inherit;font-size:13px}
+.pcols{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:10px}
+.pcol{flex:1;min-width:240px}
+.pch{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;margin-bottom:5px}
+.chip{display:inline-block;padding:2px 8px;margin:2px;border:1px solid var(--border);border-radius:12px;font-size:11px;cursor:pointer;font-family:monospace}
+.chip:hover{border-color:var(--blue)}
+.chip b{color:var(--blue)}
+.pfind{margin:8px 0}
+.pf{font-size:12px;padding:4px 0}
+.pf.bad{color:var(--red)}
+.pf a{color:var(--blue);cursor:pointer;text-decoration:underline}
 </style>
 </head>
 <body>
 <header>
   <h1>platform-audit-service</h1>
   <span id="back">← builds</span>
+  <span id="patbtn">⊞ patterns</span>
   <span id="breadcrumb"></span>
 </header>
 <main id="app"><div class="msg">loading…</div></main>
@@ -163,9 +177,54 @@ document.getElementById('back').addEventListener('click', () => {
   route();
 });
 window.addEventListener('popstate', () => { _filter = null; route(); });
+document.getElementById('patbtn').addEventListener('click', showPatterns);
 
 route();
 
+// --- patterns (phase 2) ---
+function shortId(id) { const p = parseId(id); return p[0] + ' #' + p[1]; }
+async function showPatterns() {
+  document.getElementById('back').style.display = '';
+  document.getElementById('breadcrumb').textContent = 'patterns';
+  const app = document.getElementById('app');
+  app.innerHTML = '<div class="msg">loading patterns…</div>';
+  try {
+    window._pat = await fetch('/patterns').then(r => r.json());
+    renderPatterns('');
+  } catch (e) { app.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+function renderPatterns(q) {
+  const P = window._pat; if (!P) return;
+  const ql = (q || '').toLowerCase();
+  const tc = Object.entries(P.tool_counts || {}).sort((a, b) => b[1] - a[1]);
+  const rc = Object.entries(P.registry_counts || {}).sort((a, b) => b[1] - a[1]);
+  const reuse = Object.entries(P.digest_reuse || {});
+  let h = '<div class="sec"><div class="sec-title">patterns across ' + (P.builds || []).length + ' builds</div>';
+  h += `<input id="patq" class="patq" placeholder="filter builds by tool / image / digest / repo…" value="${esc(q || '')}" oninput="renderPatterns(this.value)">`;
+  h += '<div class="pcols">';
+  h += '<div class="pcol"><div class="pch">tools</div>' + tc.map(([t, n]) => `<span class="chip" onclick="renderPatterns('${esc(t)}')">${esc(t)} <b>${n}</b></span>`).join('') + '</div>';
+  h += '<div class="pcol"><div class="pch">registry pushes</div>' + (rc.length ? rc.map(([t, n]) => `<span class="chip" onclick="renderPatterns('${esc(t)}')">${esc(t)} <b>${n}</b></span>`).join('') : '<span class="dim">none</span>') + '</div>';
+  h += '</div>';
+  if ((P.secrets_exposed || []).length || (P.unsigned_pushed || []).length) {
+    h += '<div class="pfind">';
+    if ((P.secrets_exposed || []).length) h += '<div class="pf bad">⚠ secrets exposed (' + P.secrets_exposed.length + '): ' + P.secrets_exposed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
+    if ((P.unsigned_pushed || []).length) h += '<div class="pf bad">⚠ pushed but UNSIGNED (' + P.unsigned_pushed.length + '): ' + P.unsigned_pushed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
+    h += '</div>';
+  }
+  if (reuse.length) h += '<div class="pf">digest reuse: ' + reuse.slice(0, 8).map(([d, ids]) => `<span class="dim" title="${esc(ids.join(', '))}">${esc(d.substring(0, 19))}… ×${ids.length}</span>`).join('  ') + '</div>';
+  const builds = (P.builds || []).filter(b => {
+    if (!ql) return true;
+    const hay = (b.audit_id + ' ' + (b.repo || '') + ' ' + (b.tools || []).join(' ') + ' ' + (b.images || []).join(' ') + ' ' + (b.digests || []).join(' ')).toLowerCase();
+    return hay.includes(ql);
+  });
+  h += '<table class="dtbl"><thead><tr><th>build</th><th>repo</th><th>image</th><th>tools</th><th>signed</th><th>push</th><th>secrets</th></tr></thead><tbody>';
+  builds.forEach(b => {
+    h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')"><td>${esc(shortId(b.audit_id))}</td><td class="dim">${esc(b.repo || '')}</td><td class="dim">${esc((b.images || []).join(', '))}</td><td class="dim">${esc((b.tools || []).join(' '))}</td><td>${b.signed ? ('<span class="sok">' + b.signed + '</span>') : '<span class="serr">0</span>'}</td><td>${b.pushed ? '✓' : ''}</td><td>${b.secrets ? ('<span class="serr">' + b.secrets + '</span>') : ''}</td></tr>`;
+  });
+  h += '</tbody></table><div class="dim" style="padding:6px 0;font-size:11px">' + builds.length + ' of ' + (P.builds || []).length + ' builds</div></div>';
+  document.getElementById('app').innerHTML = h;
+  const qi = document.getElementById('patq'); if (qi && q) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
+}
 // --- build list ---
 async function showList() {
   document.getElementById('back').style.display = 'none';

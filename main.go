@@ -121,6 +121,7 @@ func main() {
 	http.HandleFunc("/ingest/tetragon", handleIngestTetragon)
 	http.HandleFunc("/ingest/http", handleIngestHttp)
 	http.HandleFunc("/builds/", handleBuilds)
+	http.HandleFunc("/patterns", handlePatterns)
 	http.HandleFunc("/ui", handleUI)
 	http.HandleFunc("/ui/", handleUI)
 	go startRetentionWorker()
@@ -257,6 +258,116 @@ func handleIngestHttp(w http.ResponseWriter, r *http.Request) {
 
 // handleBuilds routes GET /builds/ (list), GET /builds/{id}/summary (detail),
 // and POST /builds/{id}/recorrelate (re-run correlation).
+// --- Phase 2: cross-build patterns — aggregate the activity model across all builds ---
+
+type patBuild struct {
+	AuditId     string   `json:"audit_id"`
+	GeneratedAt string   `json:"generated_at,omitempty"`
+	Repo        string   `json:"repo,omitempty"`
+	Tools       []string `json:"tools,omitempty"`
+	Images      []string `json:"images,omitempty"`
+	Digests     []string `json:"digests,omitempty"`
+	Pushed      bool     `json:"pushed,omitempty"`
+	Signed      int      `json:"signed,omitempty"`
+	Secrets     int      `json:"secrets,omitempty"`
+}
+
+type patternsResult struct {
+	Builds         []patBuild          `json:"builds"`
+	ToolCounts     map[string]int      `json:"tool_counts"`
+	RegistryCounts map[string]int      `json:"registry_counts"`
+	SecretsExposed []string            `json:"secrets_exposed"`
+	UnsignedPushed []string            `json:"unsigned_pushed"`
+	DigestReuse    map[string][]string `json:"digest_reuse"`
+}
+
+func handlePatterns(w http.ResponseWriter, r *http.Request) {
+	entries, _ := os.ReadDir(dataDir)
+	res := patternsResult{ToolCounts: map[string]int{}, RegistryCounts: map[string]int{}, DigestReuse: map[string][]string{}}
+	digestMap := map[string]map[string]bool{}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		id := e.Name()
+		data, err := os.ReadFile(filepath.Join(dataDir, id, "correlated.json"))
+		if err != nil {
+			continue
+		}
+		var rep struct {
+			GeneratedAt string         `json:"generated_at"`
+			Activity    *buildActivity `json:"activity"`
+		}
+		if json.Unmarshal(data, &rep) != nil || rep.Activity == nil {
+			continue
+		}
+		a := rep.Activity
+		pb := patBuild{AuditId: id, GeneratedAt: rep.GeneratedAt, Signed: len(a.Signatures), Secrets: len(a.SecretsExposed)}
+		if a.Source != nil {
+			pb.Repo = a.Source.Repo
+		}
+		toolSet := map[string]bool{}
+		for _, ts := range a.Tools {
+			for _, t := range ts {
+				toolSet[t] = true
+			}
+		}
+		for t := range toolSet {
+			pb.Tools = append(pb.Tools, t)
+			res.ToolCounts[t]++
+		}
+		sort.Strings(pb.Tools)
+		for _, im := range a.Images {
+			if im.Ref != "" {
+				pb.Images = append(pb.Images, im.Ref)
+			}
+		}
+		regSet := map[string]bool{}
+		for _, o := range a.RegistryOps {
+			if o.Op == "push" {
+				pb.Pushed = true
+				regSet[o.Registry+"/"+o.Repo] = true
+			}
+		}
+		for rg := range regSet {
+			res.RegistryCounts[rg]++
+		}
+		pb.Digests = a.Digests
+		if len(pb.Digests) > 12 {
+			pb.Digests = pb.Digests[:12]
+		}
+		for _, d := range a.Digests {
+			if digestMap[d] == nil {
+				digestMap[d] = map[string]bool{}
+			}
+			digestMap[d][id] = true
+		}
+		if pb.Secrets > 0 {
+			res.SecretsExposed = append(res.SecretsExposed, id)
+		}
+		if pb.Pushed && pb.Signed == 0 {
+			res.UnsignedPushed = append(res.UnsignedPushed, id)
+		}
+		res.Builds = append(res.Builds, pb)
+	}
+	for d, ids := range digestMap {
+		if len(ids) > 1 {
+			var list []string
+			for id := range ids {
+				list = append(list, id)
+			}
+			sort.Strings(list)
+			res.DigestReuse[d] = list
+		}
+	}
+	sort.Slice(res.Builds, func(i, j int) bool { return res.Builds[i].GeneratedAt > res.Builds[j].GeneratedAt })
+	sort.Strings(res.SecretsExposed)
+	sort.Strings(res.UnsignedPushed)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(res)
+}
+
 // --- #1 Cross-job chain stitch: link builds by upstream-trigger cause (name/topology-agnostic) ---
 
 var reUpstream = regexp.MustCompile(`upstream project "?([^"]+?)"? build (?:number )?#?(\d+)`)
