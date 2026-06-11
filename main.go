@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -705,16 +706,36 @@ func correlate(auditId string, wait bool) {
 		}
 	}
 
+	// Still-open blocks (STEP_START with no STEP_END — an in-progress build, or enclosing
+	// node{}/container blocks not yet closed) become windows extending to +inf, so execs
+	// inside a running block still match it instead of being flagged undeclared.
+	for _, st := range startsByNodeId {
+		windows = append(windows, window{step: st, startTS: st.TS, endTS: math.MaxInt64})
+	}
+
 	sort.Slice(windows, func(i, j int) bool { return windows[i].startTS < windows[j].startTS })
 
-	// Pick the innermost (latest-starting) window that contains ts — avoids attributing
-	// execs to the outermost enclosing block (e.g. podTemplate) when a more specific
-	// step (e.g. a stage or sh) is also active at the same timestamp.
+	// Match tolerance (ms): widen each window's bounds so execs that fire just outside a
+	// step's recorded window (scheduling/flush latency, child processes) still match.
+	pad := int64(15000)
+	if v := os.Getenv("STEP_WINDOW_PAD_MS"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			pad = n
+		}
+	}
+	// Pick the innermost (latest-starting) window that contains ts (padded) — avoids
+	// attributing execs to the outermost enclosing block when a more specific step is
+	// also active at the same timestamp.
 	matchStep := func(ts int64) *stepEvent {
 		var best *stepEvent
 		var bestStart int64
 		for i := range windows {
-			if ts >= windows[i].startTS && ts <= windows[i].endTS {
+			lo := windows[i].startTS - pad
+			hi := windows[i].endTS
+			if hi != math.MaxInt64 {
+				hi += pad
+			}
+			if ts >= lo && ts <= hi {
 				if best == nil || windows[i].startTS > bestStart {
 					s := windows[i].step
 					best = &s
@@ -812,7 +833,7 @@ func correlate(auditId string, wait bool) {
 			continue
 		}
 		pid := ce.TetragonEvent.ParentPid
-		for depth := 0; depth < 5 && pid != 0; depth++ {
+		for depth := 0; depth < 8 && pid != 0; depth++ {
 			if s, ok := pidStep[pid]; ok {
 				ce.MatchedStep = s
 				break
