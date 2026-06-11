@@ -413,6 +413,10 @@ type stepEvent struct {
 	LibrarySource *libraryRef     `json:"librarySource,omitempty"`
 	CalledFrom    *libraryRef     `json:"calledFrom,omitempty"`
 	Arguments     json.RawMessage `json:"arguments,omitempty"`
+	Origin              string `json:"origin,omitempty"`
+	SyscallGateways     int    `json:"syscallGateways,omitempty"`
+	CallCount           int    `json:"callCount,omitempty"`
+	JenkinsfileApproved *bool  `json:"jenkinsfileApproved,omitempty"`
 }
 
 type stepNode struct {
@@ -480,6 +484,9 @@ type correlationReport struct {
 	AnomalyCount           int                 `json:"anomaly_count"`
 	TotalGroovyCalls       int                 `json:"total_groovy_calls"`
 	SandboxViolationCount  int                 `json:"sandbox_violation_count"`
+	TotalGroovyCallSites   int                 `json:"total_groovy_call_sites"`
+	SyscallGatewayCount    int                 `json:"syscall_gateway_count"`
+	JenkinsfileApproved    *bool               `json:"jenkinsfile_approved,omitempty"`
 	TotalHttpRequests      int                 `json:"total_http_requests"`
 	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
 	TotalNetworkEvents     int                 `json:"total_network_events"`
@@ -499,6 +506,8 @@ type buildMeta struct {
 	AnomalyCount           int    `json:"anomaly_count"`
 	TotalGroovyCalls       int    `json:"total_groovy_calls"`
 	SandboxViolationCount  int    `json:"sandbox_violation_count"`
+	TotalGroovyCallSites   int    `json:"total_groovy_call_sites"`
+	SyscallGatewayCount    int    `json:"syscall_gateway_count"`
 	TotalHttpRequests      int    `json:"total_http_requests"`
 	BlockedHttpRequests    int    `json:"blocked_http_requests"`
 	TotalNetworkEvents     int    `json:"total_network_events"`
@@ -524,6 +533,8 @@ func correlate(auditId string, wait bool) {
 	// must not enter the step-window/tree logic. A GROOVY_DENY is a blocked escape
 	// primitive (ProcessBuilder/exec/reflection/...) and also counts as a call attempt.
 	groovyCalls, sandboxViolations := 0, 0
+	groovyCallSites, syscallGateways := 0, 0
+	var jenkinsfileApproved *bool
 	filtered := steps[:0]
 	for _, s := range steps {
 		switch s.Event {
@@ -532,6 +543,11 @@ func correlate(auditId string, wait bool) {
 		case "GROOVY_DENY":
 			groovyCalls++
 			sandboxViolations++
+		case "GROOVY_CALLSITE":
+			groovyCallSites += s.CallCount
+			syscallGateways += s.SyscallGateways
+		case "JENKINSFILE_ANALYSIS":
+			jenkinsfileApproved = s.JenkinsfileApproved
 		default:
 			filtered = append(filtered, s)
 		}
@@ -762,6 +778,9 @@ func correlate(auditId string, wait bool) {
 		AnomalyCount:           len(anomalies),
 		TotalGroovyCalls:       groovyCalls,
 		SandboxViolationCount:  sandboxViolations,
+		TotalGroovyCallSites:   groovyCallSites,
+		SyscallGatewayCount:    syscallGateways,
+		JenkinsfileApproved:    jenkinsfileApproved,
 		TotalHttpRequests:      len(httpEvents),
 		BlockedHttpRequests:    blockedCount,
 		TotalNetworkEvents:     len(correlatedNet),
@@ -777,8 +796,8 @@ func correlate(auditId string, wait bool) {
 		writeJSON(filepath.Join(buildDir, "anomalies.json"), anomalies)
 	}
 
-	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d groovy=%d denied=%d",
-		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount, report.TotalGroovyCalls, report.SandboxViolationCount)
+	log.Printf("correlation complete %s: steps=%d execs=%d http=%d blocked=%d anomalies=%d groovy=%d denied=%d callsites=%d syscall_gw=%d",
+		auditId, report.TotalSteps, report.TotalExecs, report.TotalHttpRequests, blockedCount, report.AnomalyCount, report.TotalGroovyCalls, report.SandboxViolationCount, report.TotalGroovyCallSites, report.SyscallGatewayCount)
 }
 
 // --- Step tree ------------------------------------------------------------------
