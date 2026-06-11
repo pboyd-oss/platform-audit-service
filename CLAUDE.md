@@ -1,5 +1,9 @@
 # platform-audit-service
 
+## Purpose
+
+The audit-service is the security event correlation store for build pipeline activity. It ingests three independent evidence streams -- pipeline step events from the Jenkins GraphListener shim, kernel exec and TCP events forwarded by platform-tetragon-forwarder from Tetragon eBPF, and MITM proxy HTTP events -- and correlates them into a per-build summary that the platform-attest-coordinator feeds to Cedar as policy context. Its `auditAnomalyCount` and `auditUnexpectedNetworkCount` fields are the load-bearing signals that make running undeclared code inside a build pod a Cedar deny.
+
 Security event correlation for build pipeline activity. Correlates Tetragon exec events, MITM proxy HTTP events, and pipeline step graphs to produce per-build audit summaries used as Cedar policy input.
 
 ## Local deploy (bypassing Jenkins)
