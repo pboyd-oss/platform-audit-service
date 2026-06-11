@@ -120,6 +120,7 @@ func main() {
 	http.HandleFunc("/ingest/event", handleIngestEvent)
 	http.HandleFunc("/ingest/tetragon", handleIngestTetragon)
 	http.HandleFunc("/ingest/http", handleIngestHttp)
+	http.HandleFunc("/ingest/log", handleIngestLog)
 	http.HandleFunc("/builds/", handleBuilds)
 	http.HandleFunc("/patterns", handlePatterns)
 	http.HandleFunc("/ui", handleUI)
@@ -508,6 +509,10 @@ func handleBuilds(w http.ResponseWriter, r *http.Request) {
 		handleBuildChain(w, r)
 		return
 	}
+	if strings.HasSuffix(path, "/log") {
+		handleBuildLog(w, r)
+		return
+	}
 	handleBuildSummary(w, r)
 }
 
@@ -844,6 +849,7 @@ type correlationReport struct {
 	CorrelatedFiles        []correlatedFile    `json:"correlated_files,omitempty"`
 	CorrelatedPtrace       []correlatedFile    `json:"correlated_ptrace,omitempty"`
 	Activity               *buildActivity      `json:"activity,omitempty"`
+	LogFacts               *logFacts           `json:"log_facts,omitempty"`
 }
 
 // buildMeta is a stripped-down correlationReport used for the build list endpoint.
@@ -866,6 +872,117 @@ type buildMeta struct {
 	TotalFileOpens         int    `json:"total_file_opens"`
 	TotalPtrace            int    `json:"total_ptrace"`
 	InProgress             bool   `json:"in_progress,omitempty"`
+}
+
+// --- Build-log ingestion + parse: tool OUTPUT facts the syscall/http layer can't see ---
+
+type logFacts struct {
+	Result       string   `json:"result,omitempty"`
+	Lines        int      `json:"lines,omitempty"`
+	ToolVersions []string `json:"tool_versions,omitempty"`
+	ScanFindings []string `json:"scan_findings,omitempty"`
+	TestSummary  []string `json:"test_summary,omitempty"`
+	Errors       []string `json:"errors,omitempty"`
+	WarningCount int      `json:"warning_count,omitempty"`
+}
+
+var (
+	reLogResult  = regexp.MustCompile(`Finished: (SUCCESS|FAILURE|ABORTED|UNSTABLE)`)
+	reLogVersion = regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.-]{1,20}) version[:= ]+v?(\d+\.\d+[\w.\-]*)`)
+	reLogScan    = regexp.MustCompile(`(?i)(Total: \d+ \(|CRITICAL: \d+|HIGH: \d+|Passed checks: \d+|Failed checks: \d+|found \d+ vulnerab|\d+ vulnerabilit|severity)`)
+	reLogTest    = regexp.MustCompile(`(?i)(^ok\s+\S+|--- FAIL|^FAIL\b|^PASS\b|\d+ passed|\d+ failed|Tests? run: \d+|Failures: \d+|\d+ tests? (complete|passed))`)
+	reLogErr     = regexp.MustCompile(`(\bERROR\b|\bFATAL\b|panic:|Exception|Traceback \(most recent)`)
+	reLogWarn    = regexp.MustCompile(`(?i)\bWARN`)
+)
+
+func enrichLog(text string) *logFacts {
+	if text == "" {
+		return nil
+	}
+	lf := &logFacts{}
+	seenV := map[string]bool{}
+	seenS := map[string]bool{}
+	seenT := map[string]bool{}
+	lines := strings.Split(text, "\n")
+	lf.Lines = len(lines)
+	if m := reLogResult.FindStringSubmatch(text); m != nil {
+		lf.Result = m[1]
+	}
+	for _, ln := range lines {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		if len(ln) > 300 {
+			ln = ln[:300]
+		}
+		if reLogWarn.MatchString(ln) {
+			lf.WarningCount++
+		}
+		if m := reLogVersion.FindStringSubmatch(ln); m != nil {
+			v := m[1] + " " + m[2]
+			if !seenV[v] && len(lf.ToolVersions) < 20 {
+				seenV[v] = true
+				lf.ToolVersions = append(lf.ToolVersions, v)
+			}
+		}
+		if reLogScan.MatchString(ln) && !seenS[ln] && len(lf.ScanFindings) < 30 {
+			seenS[ln] = true
+			lf.ScanFindings = append(lf.ScanFindings, ln)
+		}
+		if reLogTest.MatchString(ln) && !seenT[ln] && len(lf.TestSummary) < 30 {
+			seenT[ln] = true
+			lf.TestSummary = append(lf.TestSummary, ln)
+		}
+		if reLogErr.MatchString(ln) && len(lf.Errors) < 25 {
+			lf.Errors = append(lf.Errors, ln)
+		}
+	}
+	return lf
+}
+
+func handleIngestLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !checkIngestAuth(w, r) {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
+		http.Error(w, "read error", http.StatusBadRequest)
+		return
+	}
+	var p struct {
+		AuditId string `json:"auditId"`
+		Log     string `json:"log"`
+	}
+	if json.Unmarshal(body, &p) != nil || p.AuditId == "" || strings.Contains(p.AuditId, "..") || strings.Contains(p.AuditId, "/") {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	dir := filepath.Join(dataDir, p.AuditId)
+	os.MkdirAll(dir, 0o755)
+	if err := os.WriteFile(filepath.Join(dir, "log.txt"), []byte(p.Log), 0o644); err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	go correlate(p.AuditId, false)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleBuildLog(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/builds/")
+	auditId := strings.TrimSuffix(path, "/log")
+	data, err := os.ReadFile(filepath.Join(dataDir, auditId, "log.txt"))
+	if err != nil {
+		http.Error(w, "no log for this build", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Write(data)
 }
 
 // --- Build-activity enrichment: turn raw execs/http into a semantic provenance model ---
@@ -1406,9 +1523,11 @@ func correlate(auditId string, wait bool) {
 			break
 		}
 	}
+	logText, _ := os.ReadFile(filepath.Join(buildDir, "log.txt"))
 	report := correlationReport{
 		AuditId:                auditId,
 		InProgress:             !sawBuildEnd,
+		LogFacts:               enrichLog(string(logText)),
 		GeneratedAt:            time.Now().UTC().Format(time.RFC3339Nano),
 		TotalSteps:             len(windows),
 		TotalExecs:             len(correlated),

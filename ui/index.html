@@ -83,6 +83,7 @@ main{padding:20px 24px;max-width:1400px}
 .provrow.bad .provk{color:var(--red)}
 .provk{min-width:64px;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding-top:2px}
 .provv{font-family:monospace;word-break:break-all}
+.rawlog{max-height:420px;overflow:auto;background:var(--bg2);padding:10px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;border-radius:5px;margin-top:8px;border:1px solid var(--border)}
 .chainwrap{margin:0 0 12px}
 .chainlbl{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
 .chain{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
@@ -362,6 +363,7 @@ function render() {
   </div>`;
 
   h += renderActivity(d.activity);
+  h += renderLogFacts(d.log_facts);
   h += groovyPanel(d);
 
   // step tree
@@ -523,6 +525,26 @@ function renderTree(nodes, ec, hc, nc, root) {
   return h;
 }
 
+function renderLogFacts(lf) {
+  if (!lf) return '';
+  let h = '<div class="sec"><div class="sec-title">log facts' + (lf.result ? ` <span class="badge ${lf.result === 'SUCCESS' ? 'bg' : 'br'}">${esc(lf.result)}</span>` : '') + '</div><div class="prov">';
+  if ((lf.tool_versions || []).length) h += `<div class="provrow"><span class="provk">versions</span><span class="provv dim">${lf.tool_versions.map(esc).join('  ·  ')}</span></div>`;
+  (lf.scan_findings || []).forEach(x => h += `<div class="provrow"><span class="provk">scan</span><span class="provv">${esc(x)}</span></div>`);
+  (lf.test_summary || []).forEach(x => h += `<div class="provrow"><span class="provk">test</span><span class="provv">${esc(x)}</span></div>`);
+  if (lf.warning_count) h += `<div class="provrow"><span class="provk">warnings</span><span class="provv">${lf.warning_count}</span></div>`;
+  (lf.errors || []).slice(0, 15).forEach(x => h += `<div class="provrow bad"><span class="provk">error</span><span class="provv">${esc(x)}</span></div>`);
+  h += `<div class="provrow"><span class="provk">log</span><span class="provv"><span class="loadcs" onclick="loadLog()">view raw${lf.lines ? ' (' + lf.lines + ' lines)' : ''} ▸</span></span></div>`;
+  h += '</div><div id="rawlog"></div></div>';
+  return h;
+}
+async function loadLog() {
+  const box = document.getElementById('rawlog'); if (!box) return;
+  box.innerHTML = '<div class="msg">loading…</div>';
+  try {
+    const t = await fetch(`/builds/${encodeURIComponent(window._bid)}/log`).then(r => { if (!r.ok) throw new Error('no log'); return r.text(); });
+    box.innerHTML = `<pre class="rawlog">${esc(t)}</pre>`;
+  } catch (e) { box.innerHTML = `<div class="err" style="padding:6px 0">${esc(e.message)}</div>`; }
+}
 function renderActivity(a) {
   if (!a) return '';
   let h = '<div class="sec"><div class="sec-title">build provenance</div><div class="prov">';
