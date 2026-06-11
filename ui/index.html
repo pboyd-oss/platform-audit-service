@@ -56,6 +56,7 @@ main{padding:20px 24px;max-width:1400px}
 .verdict.bad{background:rgba(248,81,73,.1);color:var(--red)}
 .findings{margin:0;padding-left:18px;color:var(--red);font-size:12px}
 .findings li{padding:2px 0}
+.targs{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;font-family:monospace}
 .loadcs{color:var(--blue);cursor:pointer;font-size:11px;text-transform:none;letter-spacing:0}
 .cstoolbar{padding:4px 0 10px;font-size:12px;color:var(--muted)}
 .csgrp{border:1px solid var(--border);border-radius:4px;margin-bottom:6px}
@@ -380,11 +381,12 @@ function renderTree(nodes, ec, hc, nc, root) {
     const e    = ec[n.nodeId] ? `<span class="ec">${ec[n.nodeId]}e</span>` : '';
     const ht   = hc[n.nodeId] ? `<span class="hc">${hc[n.nodeId]}h</span>` : '';
     const nt   = nc[n.nodeId] ? `<span class="fn">${nc[n.nodeId]}t</span>` : '';
+    const args = (n.arguments && n.arguments.raw) ? `<span class="targs" title="${esc(String(n.arguments.raw))}">${esc(String(n.arguments.raw).substring(0,80))}</span>` : '';
     h += `<div class="tnode${root?' root':''}">
       <div class="trow${sel}" onclick="selectNode('${esc(n.nodeId)}')">
         <span class="expand">${exp}</span>
         <span class="sname" title="${esc(n.stepName)}">${esc(n.stepName)}</span>
-        ${fn}${e}${ht}${nt}${fail}
+        ${fn}${args}${e}${ht}${nt}${fail}
         <span class="dur">${dur}</span>
       </div>
       ${renderTree(n.children||[], ec, hc, nc, false)}
@@ -396,7 +398,7 @@ function renderTree(nodes, ec, hc, nc, root) {
 function execTable(rows) {
   if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
   let h = `<table class="dtbl"><thead><tr>
-    <th>binary</th><th>args</th><th>pid</th><th>step</th><th>time</th>
+    <th>binary</th><th>args</th><th>pid</th><th>ppid</th><th>step</th><th>time</th>
   </tr></thead><tbody>`;
   for (const e of rows) {
     const te  = e.tetragon_event;
@@ -407,6 +409,7 @@ function execTable(rows) {
       <td class="bin" title="${esc(te.binary)}">${esc(bin)}</td>
       <td title="${esc(te.args)}">${esc((te.args||'').substring(0,100))}</td>
       <td class="dim">${te.pid}</td>
+      <td class="dim">${te.parent_pid||''}</td>
       <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
       <td class="dim">${fmtTime(te.ts)}</td>
     </tr>`;
@@ -417,7 +420,7 @@ function execTable(rows) {
 function httpTable(rows) {
   if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no http events</div>';
   let h = `<table class="dtbl"><thead><tr>
-    <th>method</th><th>url</th><th>status</th><th>size</th><th>step</th><th>time</th>
+    <th>method</th><th>url</th><th>status</th><th>size</th><th>sha256</th><th>step</th><th>time</th>
   </tr></thead><tbody>`;
   for (const e of rows) {
     const he  = e.http_event;
@@ -430,6 +433,7 @@ function httpTable(rows) {
       <td class="url" title="${esc(he.url)}">${esc((he.url||'').substring(0,90))}</td>
       <td class="${scls}">${stat}</td>
       <td class="dim">${he.size ? fmtSize(he.size) : '—'}</td>
+      <td class="dim" title="${esc(he.sha256)}">${he.sha256 ? esc(he.sha256.substring(0,12)) : '—'}</td>
       <td class="dim" title="${esc(step)}">${esc(step.substring(0,45))}</td>
       <td class="dim">${fmtTime(he.ts)}</td>
     </tr>`;
