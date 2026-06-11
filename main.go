@@ -413,10 +413,15 @@ type stepEvent struct {
 	LibrarySource *libraryRef     `json:"librarySource,omitempty"`
 	CalledFrom    *libraryRef     `json:"calledFrom,omitempty"`
 	Arguments     json.RawMessage `json:"arguments,omitempty"`
-	Origin              string `json:"origin,omitempty"`
-	SyscallGateways     int    `json:"syscallGateways,omitempty"`
-	CallCount           int    `json:"callCount,omitempty"`
-	JenkinsfileApproved *bool  `json:"jenkinsfileApproved,omitempty"`
+	Origin              string     `json:"origin,omitempty"`
+	Source              string     `json:"source,omitempty"`
+	Signature           string     `json:"signature,omitempty"`
+	Provenance          string     `json:"provenance,omitempty"`
+	SyscallGateways     int        `json:"syscallGateways,omitempty"`
+	CallCount           int        `json:"callCount,omitempty"`
+	JenkinsfileApproved *bool      `json:"jenkinsfileApproved,omitempty"`
+	Findings            []string   `json:"findings,omitempty"`
+	Calls               []callSite `json:"calls,omitempty"`
 }
 
 type stepNode struct {
@@ -476,6 +481,28 @@ type correlatedHttp struct {
 	MatchedStep *stepEvent `json:"matched_step,omitempty"`
 }
 
+type callSite struct {
+	Line    int    `json:"line"`
+	Kind    string `json:"kind"`
+	Target  string `json:"target"`
+	Method  string `json:"method"`
+	Syscall string `json:"syscall,omitempty"`
+}
+
+type groovyDeny struct {
+	Signature  string `json:"signature"`
+	Provenance string `json:"provenance,omitempty"`
+}
+
+type syscallSite struct {
+	Origin  string `json:"origin"`
+	Source  string `json:"source"`
+	Line    int    `json:"line"`
+	Target  string `json:"target"`
+	Method  string `json:"method"`
+	Syscall string `json:"syscall"`
+}
+
 type correlationReport struct {
 	AuditId                string              `json:"audit_id"`
 	GeneratedAt            string              `json:"generated_at"`
@@ -487,6 +514,9 @@ type correlationReport struct {
 	TotalGroovyCallSites   int                 `json:"total_groovy_call_sites"`
 	SyscallGatewayCount    int                 `json:"syscall_gateway_count"`
 	JenkinsfileApproved    *bool               `json:"jenkinsfile_approved,omitempty"`
+	JenkinsfileFindings    []string            `json:"jenkinsfile_findings,omitempty"`
+	GroovyDenies           []groovyDeny        `json:"groovy_denies,omitempty"`
+	SyscallCallSites       []syscallSite       `json:"syscall_call_sites,omitempty"`
 	TotalHttpRequests      int                 `json:"total_http_requests"`
 	BlockedHttpRequests    int                 `json:"blocked_http_requests"`
 	TotalNetworkEvents     int                 `json:"total_network_events"`
@@ -535,6 +565,9 @@ func correlate(auditId string, wait bool) {
 	groovyCalls, sandboxViolations := 0, 0
 	groovyCallSites, syscallGateways := 0, 0
 	var jenkinsfileApproved *bool
+	var jenkinsfileFindings []string
+	groovyDenies := []groovyDeny{}
+	syscallSites := []syscallSite{}
 	filtered := steps[:0]
 	for _, s := range steps {
 		switch s.Event {
@@ -543,11 +576,22 @@ func correlate(auditId string, wait bool) {
 		case "GROOVY_DENY":
 			groovyCalls++
 			sandboxViolations++
+			if len(groovyDenies) < 200 {
+				groovyDenies = append(groovyDenies, groovyDeny{Signature: s.Signature, Provenance: s.Provenance})
+			}
 		case "GROOVY_CALLSITE":
 			groovyCallSites += s.CallCount
 			syscallGateways += s.SyscallGateways
+			for _, c := range s.Calls {
+				if c.Syscall != "" && len(syscallSites) < 300 {
+					syscallSites = append(syscallSites, syscallSite{
+						Origin: s.Origin, Source: s.Source, Line: c.Line,
+						Target: c.Target, Method: c.Method, Syscall: c.Syscall})
+				}
+			}
 		case "JENKINSFILE_ANALYSIS":
 			jenkinsfileApproved = s.JenkinsfileApproved
+			jenkinsfileFindings = s.Findings
 		default:
 			filtered = append(filtered, s)
 		}
@@ -781,6 +825,9 @@ func correlate(auditId string, wait bool) {
 		TotalGroovyCallSites:   groovyCallSites,
 		SyscallGatewayCount:    syscallGateways,
 		JenkinsfileApproved:    jenkinsfileApproved,
+		JenkinsfileFindings:    jenkinsfileFindings,
+		GroovyDenies:           groovyDenies,
+		SyscallCallSites:       syscallSites,
 		TotalHttpRequests:      len(httpEvents),
 		BlockedHttpRequests:    blockedCount,
 		TotalNetworkEvents:     len(correlatedNet),

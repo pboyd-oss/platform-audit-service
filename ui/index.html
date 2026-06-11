@@ -49,6 +49,13 @@ main{padding:20px 24px;max-width:1400px}
 .stat-val{font-size:22px;margin-top:2px}
 .stat-val.red{color:var(--red)}
 .stat-val.yellow{color:var(--yellow)}
+.stat-val.green{color:var(--green)}
+.dtbl tr.bad td{background:rgba(248,81,73,.08)}
+.verdict{font-size:13px;padding:8px 10px;border-radius:4px;margin-bottom:8px}
+.verdict.ok{background:rgba(63,185,80,.1);color:var(--green)}
+.verdict.bad{background:rgba(248,81,73,.1);color:var(--red)}
+.findings{margin:0;padding-left:18px;color:var(--red);font-size:12px}
+.findings li{padding:2px 0}
 
 /* sections */
 .sec{margin-bottom:20px}
@@ -135,23 +142,25 @@ async function showList() {
     let h = `<table class="tbl">
       <thead><tr>
         <th>build</th><th>steps</th><th>execs</th><th>http</th>
-        <th>blocked</th><th>network</th><th>anomalies</th><th>completed</th>
+        <th>blocked</th><th>network</th><th>anomalies</th><th>denied</th><th>syscall</th><th>completed</th>
       </tr></thead><tbody>`;
 
     for (const b of builds) {
       if (b.in_progress) {
-        h += `<tr><td class="inprog" colspan="8">${esc(b.audit_id)} — in progress</td></tr>`;
+        h += `<tr><td class="inprog" colspan="10">${esc(b.audit_id)} — in progress</td></tr>`;
         continue;
       }
       const [job, num] = parseId(b.audit_id);
       const anomBadge = b.anomaly_count > 0 ? `<span class="badge br">${b.anomaly_count}</span>` : `<span class="badge bg">0</span>`;
       const blkBadge  = b.blocked_http_requests > 0 ? `<span class="badge by">${b.blocked_http_requests}</span>` : `<span class="badge bm">0</span>`;
       const netBadge  = b.unexpected_network_count > 0 ? `<span class="badge br">${b.unexpected_network_count}!</span>` : `<span class="badge bm">${b.total_network_events||0}</span>`;
+      const denBadge  = b.sandbox_violation_count > 0 ? `<span class="badge br">${b.sandbox_violation_count}!</span>` : `<span class="badge bm">0</span>`;
+      const gwBadge   = b.syscall_gateway_count > 0 ? `<span class="badge by">${b.syscall_gateway_count}</span>` : `<span class="badge bm">0</span>`;
       const genAt = b.generated_at ? new Date(b.generated_at).toLocaleString() : '—';
       h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')">
         <td><span class="jpath">${esc(job)}/</span><span class="bnum">#${esc(num)}</span></td>
         <td>${b.total_steps}</td><td>${b.total_execs}</td><td>${b.total_http_requests||0}</td>
-        <td>${blkBadge}</td><td>${netBadge}</td><td>${anomBadge}</td>
+        <td>${blkBadge}</td><td>${netBadge}</td><td>${anomBadge}</td><td>${denBadge}</td><td>${gwBadge}</td>
         <td class="dim">${esc(genAt)}</td>
       </tr>`;
     }
@@ -201,6 +210,11 @@ function render() {
   const blkCls   = d.blocked_http_requests > 0 ? ' yellow' : '';
   const anomCls  = d.anomaly_count > 0 ? ' red' : '';
   const netCls   = d.unexpected_network_count > 0 ? ' red' : '';
+  const denCls   = d.sandbox_violation_count > 0 ? ' red' : '';
+  const gwCls    = d.syscall_gateway_count > 0 ? ' yellow' : '';
+  let jfTxt = '—', jfCls = '';
+  if (d.jenkinsfile_approved === true)  { jfTxt = '✓'; jfCls = ' green'; }
+  else if (d.jenkinsfile_approved === false) { jfTxt = '✗'; jfCls = ' red'; }
 
   let h = `<div class="stats">
     <div><div class="stat-label">steps</div><div class="stat-val">${d.total_steps}</div></div>
@@ -210,7 +224,14 @@ function render() {
     <div><div class="stat-label">network</div><div class="stat-val">${d.total_network_events||0}</div></div>
     <div><div class="stat-label">unexpected</div><div class="stat-val${netCls}">${d.unexpected_network_count||0}</div></div>
     <div><div class="stat-label">anomalies</div><div class="stat-val${anomCls}">${d.anomaly_count}</div></div>
+    <div><div class="stat-label">groovy</div><div class="stat-val">${d.total_groovy_calls||0}</div></div>
+    <div><div class="stat-label">denied</div><div class="stat-val${denCls}">${d.sandbox_violation_count||0}</div></div>
+    <div><div class="stat-label">call-sites</div><div class="stat-val">${d.total_groovy_call_sites||0}</div></div>
+    <div><div class="stat-label">syscall-gw</div><div class="stat-val${gwCls}">${d.syscall_gateway_count||0}</div></div>
+    <div><div class="stat-label">jenkinsfile</div><div class="stat-val${jfCls}">${jfTxt}</div></div>
   </div>`;
+
+  h += groovyPanel(d);
 
   // step tree
   h += '<div class="sec"><div class="sec-title">step tree';
@@ -243,6 +264,35 @@ function render() {
 
   document.getElementById('app').innerHTML = h;
 }
+
+function groovyPanel(d) {
+  let h = '';
+  if (d.jenkinsfile_approved === true || d.jenkinsfile_approved === false) {
+    const ok = d.jenkinsfile_approved === true;
+    h += '<div class="sec"><div class="sec-title">jenkinsfile analysis</div>';
+    h += `<div class="verdict ${ok?'ok':'bad'}">${ok?'✓ approved thin platform template':'✗ not an approved thin template'}</div>`;
+    const f = d.jenkinsfile_findings || [];
+    if (f.length) h += '<ul class="findings">' + f.map(x=>`<li>${esc(x)}</li>`).join('') + '</ul>';
+    h += '</div>';
+  }
+  const den = d.groovy_denies || [];
+  if (den.length) {
+    h += '<div class="sec"><div class="sec-title">blocked groovy <span class="badge br">'+den.length+'</span></div>';
+    h += '<table class="dtbl"><thead><tr><th>blocked signature</th><th>origin</th></tr></thead><tbody>';
+    h += den.map(x=>`<tr class="bad"><td title="${esc(x.signature)}">${esc(x.signature)}</td><td class="dim">${esc(x.provenance||'')}</td></tr>`).join('');
+    h += '</tbody></table></div>';
+  }
+  const gw = d.syscall_call_sites || [];
+  if (gw.length) {
+    h += '<div class="sec"><div class="sec-title">syscall gateways <span class="badge by">'+gw.length+'</span></div>';
+    h += '<table class="dtbl"><thead><tr><th>syscall</th><th>call</th><th>origin</th><th>source</th></tr></thead><tbody>';
+    h += gw.map(x=>`<tr><td><span class="badge by">${esc(x.syscall)}</span></td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}</td><td class="dim">${esc(x.origin)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`).join('');
+    h += '</tbody></table></div>';
+  }
+  return h;
+}
+
+function srcShort(p) { if (!p) return ''; const i = p.lastIndexOf('/'); return i >= 0 ? p.substring(i+1) : p; }
 
 function renderTree(nodes, ec, hc, nc, root) {
   if (!nodes?.length) return '';
