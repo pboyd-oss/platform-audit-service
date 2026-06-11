@@ -439,6 +439,7 @@ type tetragonEvent struct {
 	ParentPid int    `json:"parent_pid,omitempty"`
 	DestIP    string `json:"dest_ip,omitempty"`
 	DestPort  int    `json:"dest_port,omitempty"`
+	Path      string `json:"path,omitempty"`
 }
 
 type httpEvent struct {
@@ -595,6 +596,32 @@ func correlate(auditId string, wait bool) {
 				})
 			}
 			correlatedNet = append(correlatedNet, cn)
+			continue
+		}
+		if te.EventType == "ptrace" {
+			reason := "ptrace() during build — possible process/credential injection"
+			anomalies = append(anomalies, map[string]any{
+				"audit_id": auditId, "type": "ptrace", "binary": te.Binary,
+				"ts": te.TS, "reason": reason,
+			})
+			fireAlert("ptrace", map[string]any{
+				"alertname": "PtraceDuringBuild", "severity": "critical", "audit_id": auditId,
+				"binary": te.Binary,
+				"summary": fmt.Sprintf("ptrace during build %s by %s", auditId, te.Binary),
+				"description": "A process attached to another via ptrace during the build — possible memory/credential scraping.",
+			})
+			continue
+		}
+		if te.EventType == "file_open" {
+			// Observability only: sensitive-file access needs path-allowlist calibration
+			// before it feeds AnomalyCount (which is a HARD attest-gate forbid). Alert now,
+			// gate later once false positives per podTemplate are tuned out.
+			fireAlert("sensitive_file", map[string]any{
+				"alertname": "SensitiveFileAccess", "severity": "warning", "audit_id": auditId,
+				"path": te.Path, "binary": te.Binary,
+				"summary": fmt.Sprintf("Sensitive file access during build %s: %s", auditId, te.Path),
+				"description": "Build pod opened a credential-bearing path. Review before enabling as a hard gate.",
+			})
 			continue
 		}
 		ce := correlatedExec{TetragonEvent: te}
