@@ -1,8 +1,8 @@
 package main
 
 import (
-	_ "embed"
 	"bufio"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +47,9 @@ func isExternalIP(ip string) bool {
 
 //go:embed ui/index.html
 var uiHTML []byte
+
+//go:embed ui/suite.css
+var suiteCSS []byte
 
 var (
 	dataDir         = envOrDefault("DATA_DIR", "/data/builds")
@@ -125,6 +128,7 @@ func main() {
 	http.HandleFunc("/patterns", handlePatterns)
 	http.HandleFunc("/ui", handleUI)
 	http.HandleFunc("/ui/", handleUI)
+	http.HandleFunc("/suite.css", handleSuiteCSS)
 	go startRetentionWorker()
 	log.Printf("audit-service listening on %s, data dir %s", listenAddr, dataDir)
 	log.Fatal(http.ListenAndServe(listenAddr, nil))
@@ -138,6 +142,11 @@ func handleHealthz(w http.ResponseWriter, r *http.Request) {
 func handleUI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(uiHTML)
+}
+
+func handleSuiteCSS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Write(suiteCSS)
 }
 
 func handleIngestEvent(w http.ResponseWriter, r *http.Request) {
@@ -687,37 +696,42 @@ type libraryRef struct {
 	Library  string `json:"library,omitempty"`
 	Version  string `json:"version,omitempty"`
 	StepName string `json:"stepName,omitempty"`
+	// LoadedDigest = SHA-256 of the library code that actually loaded on disk (set by
+	// PlatformAuditGraphListener) — independent of the version the build declares.
+	// Trusted = the library ran as a Jenkins globally-trusted library.
+	LoadedDigest string `json:"loadedDigest,omitempty"`
+	Trusted      bool   `json:"trusted,omitempty"`
 }
 
 type stepEvent struct {
-	Event         string          `json:"event"`
-	NodeId        string          `json:"nodeId"`
-	StartNodeId   string          `json:"startNodeId"`
-	StepName      string          `json:"stepName"`
-	FunctionName  string          `json:"functionName"`
-	TS            int64           `json:"ts"`
-	Result        string          `json:"result"`
-	TriggeredBy   []string        `json:"triggeredBy,omitempty"`
-	DurationMs    *int64          `json:"durationMs,omitempty"`
-	EnclosingIds  []string        `json:"enclosingIds,omitempty"`
-	LibrarySource *libraryRef     `json:"librarySource,omitempty"`
-	CalledFrom    *libraryRef     `json:"calledFrom,omitempty"`
-	Arguments     json.RawMessage `json:"arguments,omitempty"`
-	Origin              string     `json:"origin,omitempty"`
-	Source              string     `json:"source,omitempty"`
-	Clazz               string     `json:"clazz,omitempty"`
-	Line                int        `json:"line,omitempty"`
-	Kind                string     `json:"kind,omitempty"`
-	Target              string     `json:"target,omitempty"`
-	Method              string     `json:"method,omitempty"`
-	Args                []string   `json:"args,omitempty"`
-	Signature           string     `json:"signature,omitempty"`
-	Provenance          string     `json:"provenance,omitempty"`
-	SyscallGateways     int        `json:"syscallGateways,omitempty"`
-	CallCount           int        `json:"callCount,omitempty"`
-	JenkinsfileApproved *bool      `json:"jenkinsfileApproved,omitempty"`
-	Findings            []string   `json:"findings,omitempty"`
-	Calls               []callSite `json:"calls,omitempty"`
+	Event               string          `json:"event"`
+	NodeId              string          `json:"nodeId"`
+	StartNodeId         string          `json:"startNodeId"`
+	StepName            string          `json:"stepName"`
+	FunctionName        string          `json:"functionName"`
+	TS                  int64           `json:"ts"`
+	Result              string          `json:"result"`
+	TriggeredBy         []string        `json:"triggeredBy,omitempty"`
+	DurationMs          *int64          `json:"durationMs,omitempty"`
+	EnclosingIds        []string        `json:"enclosingIds,omitempty"`
+	LibrarySource       *libraryRef     `json:"librarySource,omitempty"`
+	CalledFrom          *libraryRef     `json:"calledFrom,omitempty"`
+	Arguments           json.RawMessage `json:"arguments,omitempty"`
+	Origin              string          `json:"origin,omitempty"`
+	Source              string          `json:"source,omitempty"`
+	Clazz               string          `json:"clazz,omitempty"`
+	Line                int             `json:"line,omitempty"`
+	Kind                string          `json:"kind,omitempty"`
+	Target              string          `json:"target,omitempty"`
+	Method              string          `json:"method,omitempty"`
+	Args                []string        `json:"args,omitempty"`
+	Signature           string          `json:"signature,omitempty"`
+	Provenance          string          `json:"provenance,omitempty"`
+	SyscallGateways     int             `json:"syscallGateways,omitempty"`
+	CallCount           int             `json:"callCount,omitempty"`
+	JenkinsfileApproved *bool           `json:"jenkinsfileApproved,omitempty"`
+	Findings            []string        `json:"findings,omitempty"`
+	Calls               []callSite      `json:"calls,omitempty"`
 }
 
 type stepNode struct {
@@ -784,10 +798,10 @@ type correlatedHttp struct {
 }
 
 type callSite struct {
-	Id      int    `json:"id"`
-	Parent  *int   `json:"parent,omitempty"`
-	Line    int    `json:"line"`
-	Kind    string `json:"kind"`
+	Id      int      `json:"id"`
+	Parent  *int     `json:"parent,omitempty"`
+	Line    int      `json:"line"`
+	Kind    string   `json:"kind"`
 	Target  string   `json:"target"`
 	Method  string   `json:"method"`
 	Syscall string   `json:"syscall,omitempty"`
@@ -819,18 +833,23 @@ type syscallSite struct {
 }
 
 type correlationReport struct {
-	AuditId                string              `json:"audit_id"`
-	GeneratedAt            string              `json:"generated_at"`
-	InProgress             bool                `json:"in_progress,omitempty"`
-	TotalSteps             int                 `json:"total_steps"`
-	TotalExecs             int                 `json:"total_execs"`
-	AnomalyCount           int                 `json:"anomaly_count"`
-	UnexpectedBinaryCount  int                 `json:"unexpected_binary_count"`
-	TotalGroovyCalls       int                 `json:"total_groovy_calls"`
-	SandboxViolationCount  int                 `json:"sandbox_violation_count"`
-	TotalGroovyCallSites   int                 `json:"total_groovy_call_sites"`
-	SyscallGatewayCount    int                 `json:"syscall_gateway_count"`
-	TotalGroovyRuntimeCalls int                `json:"total_groovy_runtime_calls"`
+	AuditId                 string `json:"audit_id"`
+	GeneratedAt             string `json:"generated_at"`
+	InProgress              bool   `json:"in_progress,omitempty"`
+	TotalSteps              int    `json:"total_steps"`
+	TotalExecs              int    `json:"total_execs"`
+	AnomalyCount            int    `json:"anomaly_count"`
+	UnexpectedBinaryCount   int    `json:"unexpected_binary_count"`
+	TotalGroovyCalls        int    `json:"total_groovy_calls"`
+	SandboxViolationCount   int    `json:"sandbox_violation_count"`
+	TotalGroovyCallSites    int    `json:"total_groovy_call_sites"`
+	SyscallGatewayCount     int    `json:"syscall_gateway_count"`
+	CustomSyscallSiteCount  int    `json:"custom_syscall_site_count"`
+	TotalGroovyRuntimeCalls int    `json:"total_groovy_runtime_calls"`
+	// Independent classloader-provenance attribution (computed from raw events, not the shim).
+	CalledLibrarySteps     []string            `json:"called_library_steps,omitempty"`
+	CustomStepCount        int                 `json:"custom_step_count"`
+	LibraryDigests         map[string]string   `json:"library_digests,omitempty"`
 	JenkinsfileApproved    *bool               `json:"jenkinsfile_approved,omitempty"`
 	JenkinsfileFindings    []string            `json:"jenkinsfile_findings,omitempty"`
 	GroovyDenies           []groovyDeny        `json:"groovy_denies,omitempty"`
@@ -854,24 +873,26 @@ type correlationReport struct {
 
 // buildMeta is a stripped-down correlationReport used for the build list endpoint.
 type buildMeta struct {
-	AuditId                string `json:"audit_id"`
-	GeneratedAt            string `json:"generated_at,omitempty"`
-	TotalSteps             int    `json:"total_steps"`
-	TotalExecs             int    `json:"total_execs"`
-	AnomalyCount           int    `json:"anomaly_count"`
-	UnexpectedBinaryCount  int    `json:"unexpected_binary_count"`
-	TotalGroovyCalls       int    `json:"total_groovy_calls"`
-	SandboxViolationCount  int    `json:"sandbox_violation_count"`
-	TotalGroovyCallSites   int    `json:"total_groovy_call_sites"`
-	SyscallGatewayCount    int    `json:"syscall_gateway_count"`
-	TotalGroovyRuntimeCalls int   `json:"total_groovy_runtime_calls"`
-	TotalHttpRequests      int    `json:"total_http_requests"`
-	BlockedHttpRequests    int    `json:"blocked_http_requests"`
-	TotalNetworkEvents     int    `json:"total_network_events"`
-	UnexpectedNetworkCount int    `json:"unexpected_network_count"`
-	TotalFileOpens         int    `json:"total_file_opens"`
-	TotalPtrace            int    `json:"total_ptrace"`
-	InProgress             bool   `json:"in_progress,omitempty"`
+	AuditId                 string `json:"audit_id"`
+	GeneratedAt             string `json:"generated_at,omitempty"`
+	TotalSteps              int    `json:"total_steps"`
+	TotalExecs              int    `json:"total_execs"`
+	AnomalyCount            int    `json:"anomaly_count"`
+	UnexpectedBinaryCount   int    `json:"unexpected_binary_count"`
+	TotalGroovyCalls        int    `json:"total_groovy_calls"`
+	SandboxViolationCount   int    `json:"sandbox_violation_count"`
+	TotalGroovyCallSites    int    `json:"total_groovy_call_sites"`
+	SyscallGatewayCount     int    `json:"syscall_gateway_count"`
+	CustomSyscallSiteCount  int    `json:"custom_syscall_site_count"`
+	CustomStepCount         int    `json:"custom_step_count"`
+	TotalGroovyRuntimeCalls int    `json:"total_groovy_runtime_calls"`
+	TotalHttpRequests       int    `json:"total_http_requests"`
+	BlockedHttpRequests     int    `json:"blocked_http_requests"`
+	TotalNetworkEvents      int    `json:"total_network_events"`
+	UnexpectedNetworkCount  int    `json:"unexpected_network_count"`
+	TotalFileOpens          int    `json:"total_file_opens"`
+	TotalPtrace             int    `json:"total_ptrace"`
+	InProgress              bool   `json:"in_progress,omitempty"`
 }
 
 // --- Build-log ingestion + parse: tool OUTPUT facts the syscall/http layer can't see ---
@@ -1231,6 +1252,10 @@ func correlate(auditId string, wait bool) {
 	// primitive (ProcessBuilder/exec/reflection/...) and also counts as a call attempt.
 	groovyCalls, sandboxViolations := 0, 0
 	groovyCallSites, syscallGateways := 0, 0
+	// customSyscallSites = compile-time call sites from team/non-library Groovy that reach a
+	// syscall gateway (.execute(), reflection, codeload, ...). Catches raw script-level Groovy
+	// that emits no FlowNode — the blind spot the evadable jenkinsfileApproved text scan covered.
+	customSyscallSites := 0
 	var jenkinsfileApproved *bool
 	var jenkinsfileFindings []string
 	groovyDenies := []groovyDeny{}
@@ -1252,10 +1277,17 @@ func correlate(auditId string, wait bool) {
 			groovyCallSites += s.CallCount
 			syscallGateways += s.SyscallGateways
 			for _, c := range s.Calls {
-				if c.Syscall != "" && len(syscallSites) < 300 {
-					syscallSites = append(syscallSites, syscallSite{
-						Origin: s.Origin, Source: s.Source, Line: c.Line,
-						Target: c.Target, Method: c.Method, Syscall: c.Syscall, Args: c.Args})
+				if c.Syscall != "" {
+					// A syscall-reaching call site from non-library (team/unattributed) origin
+					// is custom code touching a kernel gateway — fail-closed signal for strict.
+					if s.Origin != "library" {
+						customSyscallSites++
+					}
+					if len(syscallSites) < 300 {
+						syscallSites = append(syscallSites, syscallSite{
+							Origin: s.Origin, Source: s.Source, Line: c.Line,
+							Target: c.Target, Method: c.Method, Syscall: c.Syscall, Args: c.Args})
+					}
 				}
 			}
 		case "JENKINSFILE_ANALYSIS":
@@ -1271,6 +1303,37 @@ func correlate(auditId string, wait bool) {
 		}
 	}
 	steps = filtered
+
+	// Gate-critical attribution counts computed HERE, from the raw classloader-provenance
+	// events (librarySource, set by PlatformAuditGraphListener) — NOT trusted from the
+	// Jenkins shim's self-reported tallies. The coordinator reads these from the summary so
+	// the numbers the Cedar gate keys on come from the independent witness, not the build.
+	calledLibSet := map[string]struct{}{}
+	calledLibrarySteps := []string{}
+	customStepCount := 0
+	libraryDigests := map[string]string{} // library -> real loaded-code digest (independent of declared version)
+	for i := range steps {
+		s := &steps[i]
+		switch s.Event {
+		case "STEP_START":
+			if s.LibrarySource != nil && s.LibrarySource.Source == "library" {
+				key := s.LibrarySource.Library + "::" + s.StepName
+				if _, seen := calledLibSet[key]; !seen {
+					calledLibSet[key] = struct{}{}
+					calledLibrarySteps = append(calledLibrarySteps, key)
+				}
+				if d := s.LibrarySource.LoadedDigest; d != "" {
+					libraryDigests[s.LibrarySource.Library] = d
+				}
+			}
+		case "STEP_ATOM":
+			// A leaf step the team invoked directly (not via any library step) that is not
+			// itself proven library code. 'unattributed' counts as custom (Source != "library").
+			if s.CalledFrom == nil && (s.LibrarySource == nil || s.LibrarySource.Source != "library") {
+				customStepCount++
+			}
+		}
+	}
 
 	tetEvents, err := readTetragonEvents(filepath.Join(buildDir, "tetragon.ndjson"))
 	if err != nil {
@@ -1386,8 +1449,8 @@ func correlate(auditId string, wait bool) {
 			})
 			fireAlert("ptrace", map[string]any{
 				"alertname": "PtraceDuringBuild", "severity": "critical", "audit_id": auditId,
-				"binary": te.Binary,
-				"summary": fmt.Sprintf("ptrace during build %s by %s", auditId, te.Binary),
+				"binary":      te.Binary,
+				"summary":     fmt.Sprintf("ptrace during build %s by %s", auditId, te.Binary),
 				"description": "A process attached to another via ptrace during the build — possible memory/credential scraping.",
 			})
 			correlatedPtrace = append(correlatedPtrace, correlatedFile{TetragonEvent: te, MatchedStep: matchStep(te.TS)})
@@ -1400,7 +1463,7 @@ func correlate(auditId string, wait bool) {
 			fireAlert("sensitive_file", map[string]any{
 				"alertname": "SensitiveFileAccess", "severity": "warning", "audit_id": auditId,
 				"path": te.Path, "binary": te.Binary,
-				"summary": fmt.Sprintf("Sensitive file access during build %s: %s", auditId, te.Path),
+				"summary":     fmt.Sprintf("Sensitive file access during build %s: %s", auditId, te.Path),
 				"description": "Build pod opened a credential-bearing path. Review before enabling as a hard gate.",
 			})
 			correlatedFiles = append(correlatedFiles, correlatedFile{TetragonEvent: te, MatchedStep: matchStep(te.TS)})
@@ -1525,36 +1588,40 @@ func correlate(auditId string, wait bool) {
 	}
 	logText, _ := os.ReadFile(filepath.Join(buildDir, "log.txt"))
 	report := correlationReport{
-		AuditId:                auditId,
-		InProgress:             !sawBuildEnd,
-		LogFacts:               enrichLog(string(logText)),
-		GeneratedAt:            time.Now().UTC().Format(time.RFC3339Nano),
-		TotalSteps:             len(windows),
-		TotalExecs:             len(correlated),
-		AnomalyCount:           len(anomalies),
-		UnexpectedBinaryCount:  len(unexpectedBinaries),
-		TotalGroovyCalls:       groovyCalls,
-		SandboxViolationCount:  sandboxViolations,
-		TotalGroovyCallSites:   groovyCallSites,
-		SyscallGatewayCount:    syscallGateways,
+		AuditId:                 auditId,
+		InProgress:              !sawBuildEnd,
+		LogFacts:                enrichLog(string(logText)),
+		GeneratedAt:             time.Now().UTC().Format(time.RFC3339Nano),
+		TotalSteps:              len(windows),
+		TotalExecs:              len(correlated),
+		AnomalyCount:            len(anomalies),
+		UnexpectedBinaryCount:   len(unexpectedBinaries),
+		TotalGroovyCalls:        groovyCalls,
+		SandboxViolationCount:   sandboxViolations,
+		TotalGroovyCallSites:    groovyCallSites,
+		SyscallGatewayCount:     syscallGateways,
+		CustomSyscallSiteCount:  customSyscallSites,
 		TotalGroovyRuntimeCalls: groovyRuntimeCalls,
-		JenkinsfileApproved:    jenkinsfileApproved,
-		JenkinsfileFindings:    jenkinsfileFindings,
-		GroovyDenies:           groovyDenies,
-		SyscallCallSites:       syscallSites,
-		GroovyRuntime:          runtimeCalls,
-		TotalHttpRequests:      len(httpEvents),
-		BlockedHttpRequests:    blockedCount,
-		TotalNetworkEvents:     len(correlatedNet),
-		UnexpectedNetworkCount: unexpectedNetCount,
-		TotalFileOpens:         len(correlatedFiles),
-		TotalPtrace:            len(correlatedPtrace),
-		StepTree:               buildStepTree(steps),
-		CorrelatedExecs:        correlated,
-		CorrelatedHttp:         correlHttp,
-		CorrelatedNetwork:      correlatedNet,
-		CorrelatedFiles:        correlatedFiles,
-		CorrelatedPtrace:       correlatedPtrace,
+		CalledLibrarySteps:      calledLibrarySteps,
+		CustomStepCount:         customStepCount,
+		LibraryDigests:          libraryDigests,
+		JenkinsfileApproved:     jenkinsfileApproved,
+		JenkinsfileFindings:     jenkinsfileFindings,
+		GroovyDenies:            groovyDenies,
+		SyscallCallSites:        syscallSites,
+		GroovyRuntime:           runtimeCalls,
+		TotalHttpRequests:       len(httpEvents),
+		BlockedHttpRequests:     blockedCount,
+		TotalNetworkEvents:      len(correlatedNet),
+		UnexpectedNetworkCount:  unexpectedNetCount,
+		TotalFileOpens:          len(correlatedFiles),
+		TotalPtrace:             len(correlatedPtrace),
+		StepTree:                buildStepTree(steps),
+		CorrelatedExecs:         correlated,
+		CorrelatedHttp:          correlHttp,
+		CorrelatedNetwork:       correlatedNet,
+		CorrelatedFiles:         correlatedFiles,
+		CorrelatedPtrace:        correlatedPtrace,
 	}
 
 	report.Activity = enrichActivity(correlated, correlHttp)

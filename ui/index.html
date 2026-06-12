@@ -2,169 +2,575 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Audit Service</title>
+<title>Platform Audit</title>
+<link rel="stylesheet" href="/suite.css">
 <style>
-:root {
-  --bg:     #0d1117;
-  --bg2:    #161b22;
-  --bg3:    #21262d;
-  --border: #30363d;
-  --text:   #c9d1d9;
-  --muted:  #8b949e;
-  --green:  #3fb950;
-  --red:    #f85149;
-  --yellow: #d29922;
-  --blue:   #58a6ff;
-  --font: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
-  --mono: 'SF Mono','JetBrains Mono','Fira Code',ui-monospace,Menlo,monospace;
-  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 3px 10px rgba(0,0,0,.22);
-  --radius: 9px;
+/* Tokens, base reset, body, links, focus ring, scrollbar, and the suite
+   brand header now live in /suite.css. Only app-specific component CSS and
+   the JS-coupled functional header controls remain below. */
+
+/* ---- functional header controls (JS-coupled, app-specific) ---- */
+.hdr-sep {
+  width: 1px;
+  height: 48px;
+  background: var(--border);
+  margin: 0 12px 0 4px;
+  flex-shrink: 0;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;line-height:1.55;-webkit-font-smoothing:antialiased}
-a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
-header{background:linear-gradient(180deg,var(--bg2),var(--bg));border-bottom:1px solid var(--border);padding:13px 28px;display:flex;align-items:center;gap:18px;position:sticky;top:0;z-index:10}
-header h1{font-size:14px;color:var(--text);font-weight:600;letter-spacing:.2px}
-header h1::before{content:'\25c6';color:var(--blue);margin-right:7px;font-size:12px}
-#back{cursor:pointer;color:var(--muted);font-size:12px;display:none}
-#back:hover{color:var(--text)}
-#breadcrumb{color:var(--muted);font-size:12px}
-main{padding:24px 28px;max-width:1320px;margin:0 auto}
+#back {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: color .12s, border-color .12s, background .12s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#back:hover { color: var(--text); border-color: var(--border); background: var(--bg3); }
+#breadcrumb {
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.hdr-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#patbtn {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  transition: color .12s, border-color .12s, background .12s;
+  white-space: nowrap;
+}
+#patbtn:hover { color: var(--blue); border-color: var(--blue-dim); background: rgba(91,140,255,.08); }
+#patbtn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
-/* build list */
-.tbl{width:100%;border-collapse:collapse;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
-.tbl th{text-align:left;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--border);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;background:var(--bg)}
-.tbl td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
-.tbl tr.clickable:hover td{background:var(--bg2);cursor:pointer}
-.inprog{color:var(--muted);font-style:italic}
-.jpath{color:var(--muted)}
-.bnum{font-weight:600;font-variant-numeric:tabular-nums}
+main { padding: 20px 28px 40px; max-width: 1380px; margin: 0 auto; }
 
-/* badges */
-.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:600;letter-spacing:.2px}
-.br{background:rgba(248,81,73,.15);color:var(--red)}
-.bg{background:rgba(63,185,80,.15);color:var(--green)}
-.by{background:rgba(210,153,34,.15);color:var(--yellow)}
-.bm{background:var(--bg3);color:var(--muted)}
+/* ---- build list table ---- */
+.tbl-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--bg2);
+}
+.tbl thead { position: sticky; top: 48px; z-index: 5; }
+.tbl th {
+  text-align: left;
+  color: var(--muted);
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  white-space: nowrap;
+  background: var(--bg3);
+  font-family: var(--font);
+}
+.tbl th:not(:first-child) { text-align: right; }
+.tbl td {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  transition: background .1s;
+}
+.tbl td:not(:first-child) { text-align: right; }
+.tbl tbody tr:last-child td { border-bottom: none; }
+.tbl tr.clickable:hover td { background: var(--bg3); cursor: pointer; }
+.tbl tr.clickable:focus-visible td { background: rgba(91,140,255,.06); outline: none; }
+.inprog { color: var(--muted); font-style: italic; }
+.jpath { color: var(--dimmer); font-family: var(--mono); font-size: 11px; }
+.bnum { font-weight: 600; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 
-/* stats bar */
-.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(106px,1fr));gap:10px;margin-bottom:22px}
-.stats>div{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:11px 13px;box-shadow:var(--shadow)}
-.stat-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
-.stat-val{font-size:23px;margin-top:5px;font-weight:600;font-variant-numeric:tabular-nums}
-.stat-val.red{color:var(--red)}
-.stat-val.yellow{color:var(--yellow)}
-.stat-val.green{color:var(--green)}
-.dtbl tr.bad td{background:rgba(248,81,73,.08)}
-.verdict{font-size:13px;padding:8px 10px;border-radius:4px;margin-bottom:8px}
-.verdict.ok{background:rgba(63,185,80,.1);color:var(--green)}
-.verdict.bad{background:rgba(248,81,73,.1);color:var(--red)}
-.findings{margin:0;padding-left:18px;color:var(--red);font-size:12px}
-.findings li{padding:2px 0}
-.targs{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;font-family:monospace}
-.loadcs{display:inline-block;color:var(--blue);cursor:pointer;font-size:11px;text-transform:none;letter-spacing:0;border:1px solid var(--border);border-radius:6px;padding:3px 10px;background:var(--bg3)}
-.loadcs:hover{border-color:var(--blue);background:rgba(88,166,255,.1)}
-.cstoolbar{padding:4px 0 10px;font-size:12px;color:var(--muted)}
-.csgrp{border:1px solid var(--border);border-radius:4px;margin-bottom:6px}
-.cshead{display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px}
-.cshead:hover{background:var(--bg2)}
-.csexp{color:var(--muted);font-size:10px;width:10px}
-.csclass{font-weight:bold}
-.cssrc{color:var(--muted)}
-.cscount{color:var(--muted);font-size:11px;margin-left:auto}
-.cscalls{display:none;padding:0 10px 8px}
-.cscalls.open{display:block}
-.ctnode>.ctkids{display:none;padding-left:14px;border-left:1px solid var(--border);margin-left:6px}
-.ctnode.open>.ctkids{display:block}
-.ctrow{display:flex;align-items:center;gap:8px;padding:2px 4px;cursor:default;font-size:12px;border-radius:3px}
-.ctrow:hover{background:var(--bg2)}
-.ctrow.bad{background:rgba(248,81,73,.07)}
-.ctexp{color:var(--muted);width:10px;font-size:10px}
-.ctnode.open>.ctrow .ctexp{color:var(--blue)}
-.ctline{color:var(--muted);min-width:30px;font-size:11px;text-align:right}
-.ctcall{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
-.ctrow.warn{background:rgba(210,153,34,.12)}
-.prov{padding:6px 4px;font-size:13px}
-.provrow{display:flex;gap:10px;padding:3px 0;align-items:baseline}
-.provrow.bad .provk{color:var(--red)}
-.provk{min-width:64px;color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.5px;padding-top:2px}
-.provv{font-family:monospace;word-break:break-all}
-.rawlog{max-height:420px;overflow:auto;background:var(--bg2);padding:10px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;border-radius:5px;margin-top:8px;border:1px solid var(--border)}
-.chainwrap{margin:0 0 12px}
-.chainlbl{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;margin-bottom:4px}
-.chain{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
-.chainnode{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid var(--border);border-radius:5px;cursor:pointer;font-size:12px;background:var(--bg2)}
-.chainnode:hover{border-color:var(--blue)}
-.chainnode.cur{border-color:var(--blue);background:rgba(88,166,255,.12)}
-.chainrole{font-weight:600}
-.chainacts{color:var(--muted);font-size:10px}
-.chainarrow{color:var(--muted)}
-.inprog-banner{background:rgba(210,153,34,.12);border:1px solid #d29922;border-radius:5px;padding:6px 10px;font-size:12px;margin-bottom:10px}
+/* ---- badge / pill ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .8;
+  flex-shrink: 0;
+}
+.br { background: rgba(248,81,73,.12); color: var(--red); border: 1px solid rgba(248,81,73,.2); }
+.bg { background: rgba(63,185,80,.10); color: var(--green); border: 1px solid rgba(63,185,80,.18); }
+.by { background: rgba(210,153,34,.12); color: var(--yellow); border: 1px solid rgba(210,153,34,.2); }
+.bm { background: rgba(139,151,168,.07); color: var(--muted); border: 1px solid var(--border); }
+.badge.no-dot::before { display: none; }
 
-/* sections */
-.sec{margin-bottom:18px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:15px 17px;box-shadow:var(--shadow)}
-.sec-title{color:var(--text);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;padding-bottom:11px;border-bottom:1px solid var(--border);margin-bottom:13px;display:flex;align-items:center;gap:10px}
-.filter-info{color:var(--blue);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0}
-.clear-filter{color:var(--muted);font-size:11px;cursor:pointer;text-transform:none;letter-spacing:0}
-.clear-filter:hover{color:var(--text)}
+/* ---- metric tiles ---- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.stats > div {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 12px 10px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .12s;
+}
+.stats > div:hover { border-color: var(--border2); }
+.stat-label {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: .7px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat-val {
+  font-size: 24px;
+  margin-top: 6px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono);
+  line-height: 1;
+}
+.stat-val.red { color: var(--red); }
+.stat-val.yellow { color: var(--yellow); }
+.stat-val.green { color: var(--green); }
+.stat-val.blue { color: var(--blue); }
 
-/* step tree */
-.tree{font-size:12px}
-.tnode{border-left:1px solid var(--border);margin-left:10px;padding-left:10px}
-.tnode.root{border-left:none;margin-left:0;padding-left:0}
-.trow{display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;border-radius:3px;padding-left:4px}
-.trow:hover{background:var(--bg2)}
-.trow.sel{background:rgba(88,166,255,.08);color:var(--blue)}
-.trow .expand{color:var(--muted);width:10px;flex-shrink:0;font-size:10px}
-.trow .sname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.trow .fn{color:var(--muted);font-size:11px;flex-shrink:0}
-.trow .ec{color:var(--green);font-size:10px;flex-shrink:0}
-.trow .hc{color:var(--blue);font-size:10px;flex-shrink:0}
-.trow .dur{color:var(--muted);font-size:10px;flex-shrink:0;min-width:45px;text-align:right}
-.trow .fail{color:var(--red);font-size:10px;flex-shrink:0}
+/* ---- sections / cards ---- */
+.sec {
+  margin-bottom: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.sec-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg3);
+}
+.sec-title {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  flex: 1;
+  min-width: 0;
+}
+.sec-body { padding: 14px 16px; }
+.sec-body-tight { padding: 0; }
+.filter-info { color: var(--blue); font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.clear-filter {
+  color: var(--dimmer);
+  font-size: 11px;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg4);
+  transition: color .12s, border-color .12s;
+  font-weight: 500;
+}
+.clear-filter:hover { color: var(--text); border-color: var(--border2); }
 
-/* data tables */
-.dtbl{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--mono)}
-.dtbl th{text-align:left;color:var(--muted);padding:6px 8px;border-bottom:1px solid var(--border);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;font-family:var(--font)}
-.dtbl td{padding:4px 8px;border-bottom:1px solid var(--border);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:350px}
-.dtbl tr:hover td{background:var(--bg2)}
-.dtbl tr.anom td{background:rgba(248,81,73,.05)}
-.dtbl tr.anom:hover td{background:rgba(248,81,73,.1)}
-.dtbl tr.blk td{background:rgba(210,153,34,.05)}
-.dtbl tr.blk:hover td{background:rgba(210,153,34,.1)}
-.bin{color:var(--green)}
-.url{color:var(--blue)}
-.sok{color:var(--green)}
-.serr{color:var(--red)}
-.sblk{color:var(--yellow)}
-.dim{color:var(--muted)}
+/* ---- verdict ---- */
+.verdict {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 500;
+}
+.verdict.ok { background: rgba(63,185,80,.08); color: var(--green); border: 1px solid rgba(63,185,80,.18); }
+.verdict.bad { background: rgba(248,81,73,.08); color: var(--red); border: 1px solid rgba(248,81,73,.18); }
+.findings { margin: 4px 0 0 0; padding-left: 20px; color: var(--red); font-size: 12px; }
+.findings li { padding: 2px 0; opacity: .9; }
 
-.msg{color:var(--muted);padding:18px 0;text-align:center;font-size:12px}
-.err{color:var(--red);padding:20px 0;font-size:12px}
-#patbtn{cursor:pointer;color:var(--muted);font-size:12px;margin-left:6px;font-weight:500}
-#patbtn:hover{color:var(--blue)}
-.patq{width:100%;box-sizing:border-box;padding:9px 13px;margin:8px 0 14px;background:var(--bg);border:1px solid var(--border);border-radius:7px;color:inherit;font-size:13px;font-family:var(--font)}
-.patq:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(88,166,255,.12)}
-.pcols{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:10px}
-.pcol{flex:1;min-width:240px}
-.pch{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.5px;margin-bottom:5px}
-.chip{display:inline-block;padding:3px 11px;margin:3px;border:1px solid var(--border);border-radius:20px;font-size:11px;cursor:pointer;font-family:var(--mono);background:var(--bg3);transition:border-color .12s,background .12s}
-.chip:hover{border-color:var(--blue);background:rgba(88,166,255,.08)}
-.chip b{color:var(--blue)}
-.pfind{margin:8px 0}
-.pf{font-size:12px;padding:4px 0}
-.pf.bad{color:var(--red)}
-.pf a{color:var(--blue);cursor:pointer;text-decoration:underline}
+/* ---- step tree ---- */
+.tree { font-size: 12px; }
+.tnode { border-left: 1px solid var(--border); margin-left: 10px; padding-left: 10px; }
+.tnode.root { border-left: none; margin-left: 0; padding-left: 0; }
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background .1s;
+}
+.trow:hover { background: var(--bg3); }
+.trow.sel { background: rgba(91,140,255,.1); color: var(--blue); }
+.trow.sel .expand { color: var(--blue); }
+.trow .expand { color: var(--dimmer); width: 10px; flex-shrink: 0; font-size: 10px; transition: color .1s; }
+.trow .sname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trow .fn { color: var(--dimmer); font-size: 11px; flex-shrink: 0; }
+.trow .ec { color: var(--green); font-size: 10px; flex-shrink: 0; font-family: var(--mono); font-weight: 600; }
+.trow .hc { color: var(--blue); font-size: 10px; flex-shrink: 0; font-family: var(--mono); font-weight: 600; }
+.trow .dur { color: var(--dimmer); font-size: 10px; flex-shrink: 0; min-width: 45px; text-align: right; font-family: var(--mono); }
+.trow .fail { color: var(--red); font-size: 10px; flex-shrink: 0; font-weight: 600; }
+.targs {
+  color: var(--dimmer);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+  font-family: var(--mono);
+}
+
+/* ---- data tables ---- */
+.dtbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dtbl thead { position: sticky; top: 48px; z-index: 4; }
+.dtbl th {
+  text-align: left;
+  color: var(--muted);
+  padding: 7px 11px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  white-space: nowrap;
+  font-family: var(--font);
+  background: var(--bg3);
+}
+.dtbl td {
+  padding: 5px 11px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 380px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  transition: background .08s;
+}
+.dtbl tbody tr:last-child td { border-bottom: none; }
+.dtbl tr:hover td { background: var(--bg3); }
+.dtbl tr.anom td { background: rgba(248,81,73,.04); }
+.dtbl tr.anom:hover td { background: rgba(248,81,73,.09); }
+.dtbl tr.blk td { background: rgba(210,153,34,.04); }
+.dtbl tr.blk:hover td { background: rgba(210,153,34,.09); }
+.dtbl tr.bad td { background: rgba(248,81,73,.04); }
+.dtbl tr.bad:hover td { background: rgba(248,81,73,.09); }
+.dtbl tr.clickable { cursor: pointer; }
+.bin { color: var(--green); }
+.url { color: var(--blue); }
+.sok { color: var(--green); font-weight: 600; }
+.serr { color: var(--red); font-weight: 600; }
+.sblk { color: var(--yellow); font-weight: 600; }
+.dim { color: var(--muted); }
+
+/* ---- provenance panel ---- */
+.prov { padding: 2px 0; font-size: 12.5px; }
+.provrow {
+  display: flex;
+  gap: 12px;
+  padding: 5px 0;
+  align-items: baseline;
+  border-bottom: 1px solid rgba(34,42,55,.6);
+}
+.provrow:last-child { border-bottom: none; }
+.provrow.bad .provk { color: var(--red); }
+.provrow.bad .provv { color: rgba(248,81,73,.85); }
+.provk {
+  min-width: 70px;
+  color: var(--dimmer);
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: .6px;
+  font-weight: 600;
+  padding-top: 1px;
+  flex-shrink: 0;
+  font-family: var(--font);
+}
+.provv { font-family: var(--mono); word-break: break-all; line-height: 1.5; font-size: 12px; }
+
+/* ---- raw log ---- */
+.rawlog {
+  max-height: 460px;
+  overflow: auto;
+  background: var(--bg);
+  padding: 12px 14px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+/* ---- load button ---- */
+.loadcs {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  background: var(--bg3);
+  font-family: var(--font);
+  font-weight: 500;
+  transition: border-color .12s, background .12s;
+}
+.loadcs:hover { border-color: var(--blue-dim); background: rgba(91,140,255,.1); }
+
+/* ---- call site tree ---- */
+.cstoolbar {
+  padding: 8px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cstoolbar label { cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; }
+.cstoolbar input[type=checkbox] { accent-color: var(--blue); cursor: pointer; }
+.csgrp {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 5px;
+  overflow: hidden;
+  transition: border-color .12s;
+}
+.csgrp:hover { border-color: var(--border2); }
+.cshead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  background: var(--bg3);
+  transition: background .1s;
+  user-select: none;
+}
+.cshead:hover { background: var(--bg4); }
+.csexp { color: var(--dimmer); font-size: 9px; width: 10px; flex-shrink: 0; transition: color .1s; }
+.csgrp:has(.cscalls.open) .cshead .csexp { color: var(--blue); }
+.csclass { font-weight: 600; font-family: var(--mono); font-size: 11.5px; }
+.cssrc { color: var(--muted); font-family: var(--mono); font-size: 11px; }
+.cscount { color: var(--dimmer); font-size: 10px; margin-left: auto; font-family: var(--mono); }
+.cscalls { display: none; padding: 6px 10px 8px; background: var(--bg2); }
+.cscalls.open { display: block; }
+
+/* call tree nodes */
+.ctnode > .ctkids {
+  display: none;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+  margin-left: 6px;
+  margin-top: 1px;
+}
+.ctnode.open > .ctkids { display: block; }
+.ctrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 5px;
+  cursor: default;
+  font-size: 11.5px;
+  border-radius: 4px;
+  transition: background .08s;
+}
+.ctrow:hover { background: var(--bg3); }
+.ctrow.bad { background: rgba(248,81,73,.06); }
+.ctrow.bad:hover { background: rgba(248,81,73,.1); }
+.ctrow.warn { background: rgba(210,153,34,.06); }
+.ctrow.warn:hover { background: rgba(210,153,34,.1); }
+.ctexp { color: var(--dimmer); width: 10px; font-size: 9px; flex-shrink: 0; cursor: pointer; }
+.ctnode.open > .ctrow .ctexp { color: var(--blue); }
+.ctline { color: var(--dimmer); min-width: 32px; font-size: 10px; text-align: right; font-family: var(--mono); }
+.ctcall { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+
+/* ---- delivery chain ---- */
+.chainwrap { margin: 0 0 14px; }
+.chainlbl {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  color: var(--dimmer);
+  letter-spacing: .6px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  font-family: var(--font);
+}
+.chain { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.chainnode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  background: var(--bg2);
+  transition: border-color .12s, background .12s;
+}
+.chainnode:hover { border-color: var(--blue-dim); background: rgba(91,140,255,.06); }
+.chainnode.cur { border-color: var(--blue); background: rgba(91,140,255,.1); }
+.chainrole { font-weight: 600; color: var(--text); }
+.chainacts { color: var(--dimmer); font-size: 10px; font-family: var(--mono); }
+.chainarrow { color: var(--border2); font-size: 14px; }
+
+/* ---- in-progress banner ---- */
+.inprog-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(210,153,34,.07);
+  border: 1px solid rgba(210,153,34,.25);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--yellow);
+  margin-bottom: 14px;
+}
+
+/* ---- message / error ---- */
+.msg { color: var(--dimmer); padding: 20px 0; text-align: center; font-size: 12px; }
+.err { color: var(--red); padding: 20px 0; font-size: 12px; text-align: center; }
+
+/* ---- patterns view ---- */
+.patq {
+  width: 100%;
+  padding: 9px 13px;
+  margin: 0 0 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.patq:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(91,140,255,.12); }
+.patq::placeholder { color: var(--dimmer); }
+.pcols { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
+.pcol { flex: 1; min-width: 220px; }
+.pch {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  color: var(--dimmer);
+  letter-spacing: .6px;
+  font-weight: 600;
+  margin-bottom: 7px;
+  font-family: var(--font);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  margin: 2px 3px 2px 0;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--mono);
+  background: var(--bg3);
+  color: var(--muted);
+  transition: border-color .12s, background .12s, color .12s;
+}
+.chip:hover { border-color: var(--blue-dim); background: rgba(91,140,255,.08); color: var(--text); }
+.chip b { color: var(--blue); font-weight: 600; }
+.pfind { margin: 8px 0; }
+.pf { font-size: 12px; padding: 5px 0; }
+.pf.bad {
+  color: var(--red);
+  background: rgba(248,81,73,.05);
+  border: 1px solid rgba(248,81,73,.15);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  margin-bottom: 5px;
+}
+.pf a { color: var(--blue); cursor: pointer; text-decoration: underline; }
+
+/* ---- responsive ---- */
+@media (max-width: 680px) {
+  main { padding: 14px 14px 32px; }
+  .suite-header { padding: 0 14px; }
+  .stats { grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; }
+  .stat-val { font-size: 20px; }
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>platform-audit-service</h1>
-  <span id="back">← builds</span>
-  <span id="patbtn">⊞ patterns</span>
+<header class="suite-header">
+  <div class="suite-brand">
+    <div class="suite-mark">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M6.5 1L11 3.5V9.5L6.5 12L2 9.5V3.5L6.5 1Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        <path d="M4.5 6.5L6 8L8.5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <span class="suite-wordmark">Platform <span class="accent">Audit</span></span>
+    <span class="suite-tag">/ tuxgrid</span>
+  </div>
+  <div class="suite-header-divider"></div>
+  <div class="hdr-sep" id="nav-sep" style="display:none"></div>
+  <span id="back" style="display:none">&#8592; builds</span>
   <span id="breadcrumb"></span>
+  <div class="hdr-right">
+    <span id="patbtn" tabindex="0">&#8855; patterns</span>
+  </div>
 </header>
-<main id="app"><div class="msg">loading…</div></main>
+<main id="app"><div class="msg">loading&hellip;</div></main>
 
 <script>
 'use strict';
@@ -186,16 +592,25 @@ document.getElementById('back').addEventListener('click', () => {
 });
 window.addEventListener('popstate', () => { _filter = null; route(); });
 document.getElementById('patbtn').addEventListener('click', showPatterns);
+document.getElementById('patbtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPatterns(); } });
 
 route();
+
+// helper: toggle nav chrome
+function setNavBack(show, crumb) {
+  const b = document.getElementById('back');
+  const sep = document.getElementById('nav-sep');
+  b.style.display = show ? '' : 'none';
+  sep.style.display = show ? '' : 'none';
+  document.getElementById('breadcrumb').textContent = crumb || '';
+}
 
 // --- patterns (phase 2) ---
 function shortId(id) { const p = parseId(id); return p[0] + ' #' + p[1]; }
 async function showPatterns() {
-  document.getElementById('back').style.display = '';
-  document.getElementById('breadcrumb').textContent = 'patterns';
+  setNavBack(true, 'patterns');
   const app = document.getElementById('app');
-  app.innerHTML = '<div class="msg">loading patterns…</div>';
+  app.innerHTML = '<div class="msg">loading patterns&hellip;</div>';
   try {
     window._pat = await fetch('/patterns').then(r => r.json());
     renderPatterns('');
@@ -207,68 +622,67 @@ function renderPatterns(q) {
   const tc = Object.entries(P.tool_counts || {}).sort((a, b) => b[1] - a[1]);
   const rc = Object.entries(P.registry_counts || {}).sort((a, b) => b[1] - a[1]);
   const reuse = Object.entries(P.digest_reuse || {});
-  let h = '<div class="sec"><div class="sec-title">patterns across ' + (P.builds || []).length + ' builds</div>';
-  h += `<input id="patq" class="patq" placeholder="filter builds by tool / image / digest / repo…" value="${esc(q || '')}" oninput="renderPatterns(this.value)">`;
+  let h = '<div class="sec"><div class="sec-header"><span class="sec-title">patterns across ' + (P.builds || []).length + ' builds</span></div><div class="sec-body">';
+  h += `<input id="patq" class="patq" placeholder="filter builds by tool / image / digest / repo&hellip;" value="${esc(q || '')}" oninput="renderPatterns(this.value)">`;
   h += '<div class="pcols">';
   h += '<div class="pcol"><div class="pch">tools</div>' + tc.map(([t, n]) => `<span class="chip" onclick="renderPatterns('${esc(t)}')">${esc(t)} <b>${n}</b></span>`).join('') + '</div>';
   h += '<div class="pcol"><div class="pch">registry pushes</div>' + (rc.length ? rc.map(([t, n]) => `<span class="chip" onclick="renderPatterns('${esc(t)}')">${esc(t)} <b>${n}</b></span>`).join('') : '<span class="dim">none</span>') + '</div>';
   h += '</div>';
   if ((P.secrets_exposed || []).length || (P.unsigned_pushed || []).length) {
     h += '<div class="pfind">';
-    if ((P.secrets_exposed || []).length) h += '<div class="pf bad">⚠ secrets exposed (' + P.secrets_exposed.length + '): ' + P.secrets_exposed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
-    if ((P.unsigned_pushed || []).length) h += '<div class="pf bad">⚠ pushed but UNSIGNED (' + P.unsigned_pushed.length + '): ' + P.unsigned_pushed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
+    if ((P.secrets_exposed || []).length) h += '<div class="pf bad">&#9888; secrets exposed (' + P.secrets_exposed.length + '): ' + P.secrets_exposed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
+    if ((P.unsigned_pushed || []).length) h += '<div class="pf bad">&#9888; pushed but UNSIGNED (' + P.unsigned_pushed.length + '): ' + P.unsigned_pushed.map(id => `<a onclick="nav('${esc(id)}')">${esc(shortId(id))}</a>`).join(', ') + '</div>';
     h += '</div>';
   }
-  if (reuse.length) h += '<div class="pf">digest reuse: ' + reuse.slice(0, 8).map(([d, ids]) => `<span class="dim" title="${esc(ids.join(', '))}">${esc(d.substring(0, 19))}… ×${ids.length}</span>`).join('  ') + '</div>';
+  if (reuse.length) h += '<div class="pf" style="margin-top:6px;color:var(--muted)">digest reuse: ' + reuse.slice(0, 8).map(([d, ids]) => `<span class="dim" title="${esc(ids.join(', '))}">${esc(d.substring(0, 19))}&hellip; &times;${ids.length}</span>`).join('&ensp;') + '</div>';
   const builds = (P.builds || []).filter(b => {
     if (!ql) return true;
     const hay = (b.audit_id + ' ' + (b.repo || '') + ' ' + (b.tools || []).join(' ') + ' ' + (b.images || []).join(' ') + ' ' + (b.digests || []).join(' ')).toLowerCase();
     return hay.includes(ql);
   });
-  h += '<table class="dtbl"><thead><tr><th>build</th><th>repo</th><th>image</th><th>tools</th><th>signed</th><th>push</th><th>secrets</th></tr></thead><tbody>';
+  h += '</div><div class="sec-body-tight"><table class="dtbl"><thead><tr><th>build</th><th>repo</th><th>image</th><th>tools</th><th>signed</th><th>push</th><th>secrets</th></tr></thead><tbody>';
   builds.forEach(b => {
-    h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')"><td>${esc(shortId(b.audit_id))}</td><td class="dim">${esc(b.repo || '')}</td><td class="dim">${esc((b.images || []).join(', '))}</td><td class="dim">${esc((b.tools || []).join(' '))}</td><td>${b.signed ? ('<span class="sok">' + b.signed + '</span>') : '<span class="serr">0</span>'}</td><td>${b.pushed ? '✓' : ''}</td><td>${b.secrets ? ('<span class="serr">' + b.secrets + '</span>') : ''}</td></tr>`;
+    h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')"><td>${esc(shortId(b.audit_id))}</td><td class="dim">${esc(b.repo || '')}</td><td class="dim">${esc((b.images || []).join(', '))}</td><td class="dim">${esc((b.tools || []).join(' '))}</td><td>${b.signed ? ('<span class="sok">' + b.signed + '</span>') : '<span class="serr">0</span>'}</td><td>${b.pushed ? '<span class="sok">&#10003;</span>' : ''}</td><td>${b.secrets ? ('<span class="serr">' + b.secrets + '</span>') : ''}</td></tr>`;
   });
-  h += '</tbody></table><div class="dim" style="padding:6px 0;font-size:11px">' + builds.length + ' of ' + (P.builds || []).length + ' builds</div></div>';
+  h += '</tbody></table></div><div class="sec-body" style="padding-top:6px;padding-bottom:8px"><span class="dim" style="font-size:11px">' + builds.length + ' of ' + (P.builds || []).length + ' builds</span></div></div>';
   document.getElementById('app').innerHTML = h;
   const qi = document.getElementById('patq'); if (qi && q) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); }
 }
 // --- build list ---
 async function showList() {
-  document.getElementById('back').style.display = 'none';
-  document.getElementById('breadcrumb').textContent = '';
+  setNavBack(false, '');
   const app = document.getElementById('app');
-  app.innerHTML = '<div class="msg">loading…</div>';
+  app.innerHTML = '<div class="msg">loading&hellip;</div>';
   try {
     const builds = await fetch('/builds/').then(r => r.json());
     if (!builds.length) { app.innerHTML = '<div class="msg">no completed builds yet</div>'; return; }
 
-    let h = `<table class="tbl">
+    let h = `<div class="tbl-wrap"><table class="tbl">
       <thead><tr>
-        <th>build</th><th>steps</th><th>execs</th><th>http</th>
+        <th style="text-align:left">build</th><th>steps</th><th>execs</th><th>http</th>
         <th>blocked</th><th>network</th><th>anomalies</th><th>denied</th><th>syscall</th><th>completed</th>
       </tr></thead><tbody>`;
 
     for (const b of builds) {
       if (b.in_progress) {
-        h += `<tr><td class="inprog" colspan="10">${esc(b.audit_id)} — in progress</td></tr>`;
+        h += `<tr><td class="inprog" colspan="10">${esc(b.audit_id)} &mdash; in progress</td></tr>`;
         continue;
       }
       const [job, num] = parseId(b.audit_id);
-      const anomBadge = b.anomaly_count > 0 ? `<span class="badge br">${b.anomaly_count}</span>` : `<span class="badge bg">0</span>`;
-      const blkBadge  = b.blocked_http_requests > 0 ? `<span class="badge by">${b.blocked_http_requests}</span>` : `<span class="badge bm">0</span>`;
-      const netBadge  = b.unexpected_network_count > 0 ? `<span class="badge br">${b.unexpected_network_count}!</span>` : `<span class="badge bm">${b.total_network_events||0}</span>`;
-      const denBadge  = b.sandbox_violation_count > 0 ? `<span class="badge br">${b.sandbox_violation_count}!</span>` : `<span class="badge bm">0</span>`;
-      const gwBadge   = b.syscall_gateway_count > 0 ? `<span class="badge by">${b.syscall_gateway_count}</span>` : `<span class="badge bm">0</span>`;
-      const genAt = b.generated_at ? new Date(b.generated_at).toLocaleString() : '—';
+      const anomBadge = b.anomaly_count > 0 ? `<span class="badge br">${b.anomaly_count}</span>` : `<span class="badge bg no-dot">0</span>`;
+      const blkBadge  = b.blocked_http_requests > 0 ? `<span class="badge by">${b.blocked_http_requests}</span>` : `<span class="badge bm no-dot">0</span>`;
+      const netBadge  = b.unexpected_network_count > 0 ? `<span class="badge br">${b.unexpected_network_count}!</span>` : `<span class="badge bm no-dot">${b.total_network_events||0}</span>`;
+      const denBadge  = b.sandbox_violation_count > 0 ? `<span class="badge br">${b.sandbox_violation_count}!</span>` : `<span class="badge bm no-dot">0</span>`;
+      const gwBadge   = b.syscall_gateway_count > 0 ? `<span class="badge by">${b.syscall_gateway_count}</span>` : `<span class="badge bm no-dot">0</span>`;
+      const genAt = b.generated_at ? new Date(b.generated_at).toLocaleString() : '&mdash;';
       h += `<tr class="clickable" onclick="nav('${esc(b.audit_id)}')">
-        <td><span class="jpath">${esc(job)}/</span><span class="bnum">#${esc(num)}</span></td>
+        <td style="text-align:left"><span class="jpath">${esc(job)}/</span><span class="bnum">#${esc(num)}</span></td>
         <td>${b.total_steps}</td><td>${b.total_execs}</td><td>${b.total_http_requests||0}</td>
         <td>${blkBadge}</td><td>${netBadge}</td><td>${anomBadge}</td><td>${denBadge}</td><td>${gwBadge}</td>
-        <td class="dim">${esc(genAt)}</td>
+        <td class="dim" style="font-family:var(--mono);font-size:11px">${genAt}</td>
       </tr>`;
     }
-    h += '</tbody></table>';
+    h += '</tbody></table></div>';
     app.innerHTML = h;
   } catch(e) {
     app.innerHTML = `<div class="err">failed to load: ${esc(e.message)}</div>`;
@@ -297,9 +711,9 @@ async function loadChain(id) {
       if (n.images) acts.push(n.images + 'img');
       if (n.signed) acts.push('signed');
       if (n.pushed) acts.push('push');
-      if (n.in_progress) acts.push('\u2026');
-      h += (i ? '<span class="chainarrow">\u2192</span>' : '') +
-        `<span class="chainnode${cur}" onclick="nav('${esc(n.audit_id)}')" title="${esc(n.audit_id)}"><span class="chainrole">${esc(role)}</span> <span class="bnum">#${esc(parts[1])}</span>${acts.length ? '<span class="chainacts">' + esc(acts.join(' ')) + '</span>' : ''}</span>`;
+      if (n.in_progress) acts.push('…');
+      h += (i ? '<span class="chainarrow">›</span>' : '') +
+        `<span class="chainnode${cur}" onclick="nav('${esc(n.audit_id)}')" title="${esc(n.audit_id)}"><span class="chainrole">${esc(role)}</span> <span class="bnum">#${esc(parts[1])}</span>${acts.length ? '<span class="chainacts">&ensp;' + esc(acts.join(' ')) + '</span>' : ''}</span>`;
     });
     h += '</div></div>';
     box.innerHTML = h;
@@ -307,10 +721,9 @@ async function loadChain(id) {
 }
 async function showBuild(id) {
   window._bid = id;
-  document.getElementById('back').style.display = '';
-  document.getElementById('breadcrumb').textContent = id;
+  setNavBack(true, id);
   const app = document.getElementById('app');
-  app.innerHTML = '<div class="msg">loading…</div>';
+  app.innerHTML = '<div class="msg">loading&hellip;</div>';
   try {
     const d = await fetch(`/builds/${encodeURIComponent(id)}/summary`).then(r => {
       if (!r.ok) throw new Error(r.status === 404 ? 'build not found or still in progress' : r.statusText);
@@ -344,12 +757,12 @@ function render() {
   const gwCls    = d.syscall_gateway_count > 0 ? ' yellow' : '';
   const fileCls  = d.total_file_opens > 0 ? ' yellow' : '';
   const ptrCls   = d.total_ptrace > 0 ? ' red' : '';
-  let jfTxt = '—', jfCls = '';
-  if (d.jenkinsfile_approved === true)  { jfTxt = '✓'; jfCls = ' green'; }
-  else if (d.jenkinsfile_approved === false) { jfTxt = '✗'; jfCls = ' red'; }
+  let jfTxt = '&mdash;', jfCls = '';
+  if (d.jenkinsfile_approved === true)  { jfTxt = '&#10003;'; jfCls = ' green'; }
+  else if (d.jenkinsfile_approved === false) { jfTxt = '&#10007;'; jfCls = ' red'; }
 
   let h = `<div id="chainstrip"></div>`;
-  if (d.in_progress) h += `<div class="inprog-banner">\u23f3 in progress — this view re-correlates on each load and updates as the build runs</div>`;
+  if (d.in_progress) h += `<div class="inprog-banner">&#9203; in progress &mdash; this view re-correlates on each load and updates as the build runs</div>`;
   h += `<div class="stats">
     <div><div class="stat-label">steps</div><div class="stat-val">${d.total_steps}</div></div>
     <div><div class="stat-label">execs</div><div class="stat-val">${d.total_execs}</div></div>
@@ -374,48 +787,48 @@ function render() {
   h += groovyPanel(d);
 
   // step tree
-  h += '<div class="sec"><div class="sec-title">step tree';
-  if (_filter) h += ` <span class="filter-info">filtered</span> <span class="clear-filter" onclick="clearF()">✕ clear</span>`;
-  h += '</div>';
-  h += '<div class="tree">' + renderTree(d.step_tree||[], ec, hc, nc, true) + '</div></div>';
+  h += '<div class="sec"><div class="sec-header"><span class="sec-title">step tree</span>';
+  if (_filter) h += ` <span class="filter-info">filtered</span> <span class="clear-filter" onclick="clearF()">&#10005; clear</span>`;
+  h += '</div><div class="sec-body">';
+  h += '<div class="tree">' + renderTree(d.step_tree||[], ec, hc, nc, true) + '</div></div></div>';
 
   // execs
   const filtExecs = _filter ? execs.filter(e => e.matched_step?.nodeId === _filter) : execs;
-  h += '<div class="sec"><div class="sec-title">exec events';
+  h += '<div class="sec"><div class="sec-header"><span class="sec-title">exec events</span>';
   if (_filter) h += ` <span class="filter-info">${filtExecs.length} of ${execs.length}</span>`;
-  h += '</div>' + execTree(filtExecs) + '</div>';
+  h += '</div><div class="sec-body-tight">' + execTree(filtExecs) + '</div></div>';
 
   // http
   if (http.length > 0) {
     const filtHttp = _filter ? http.filter(e => e.matched_step?.nodeId === _filter) : http;
-    h += '<div class="sec"><div class="sec-title">http requests';
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">http requests</span>';
     if (_filter) h += ` <span class="filter-info">${filtHttp.length} of ${http.length}</span>`;
-    h += '</div>' + httpTable(filtHttp) + '</div>';
+    h += '</div><div class="sec-body-tight">' + httpTable(filtHttp) + '</div></div>';
   }
 
   // network (tcp connects)
   const network = d.correlated_network || [];
   if (network.length > 0) {
     const filtNet = _filter ? network.filter(e => e.matched_step?.nodeId === _filter) : network;
-    h += '<div class="sec"><div class="sec-title">tcp connections';
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">tcp connections</span>';
     if (_filter) h += ` <span class="filter-info">${filtNet.length} of ${network.length}</span>`;
-    h += '</div>' + networkTable(filtNet) + '</div>';
+    h += '</div><div class="sec-body-tight">' + networkTable(filtNet) + '</div></div>';
   }
 
   const rt = d.groovy_runtime || [];
   if (rt.length > 0) {
-    h += '<div class="sec"><div class="sec-title">groovy runtime calls <span class="badge bg">'+(d.total_groovy_runtime_calls||rt.length)+'</span></div>';
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">groovy runtime calls</span><span class="badge bg no-dot" style="margin-left:4px">'+(d.total_groovy_runtime_calls||rt.length)+'</span></div><div class="sec-body-tight">';
     h += '<table class="dtbl"><thead><tr><th>call (with runtime args)</th><th>kind</th><th>source</th></tr></thead><tbody>';
     h += rt.map(x=>{const a=(x.args&&x.args.length)?'('+x.args.map(z=>esc(z)).join(', ')+')':'';return `<tr><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td class="dim">${esc(x.kind)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`;}).join('');
-    h += '</tbody></table></div>';
+    h += '</tbody></table></div></div>';
   }
 
   const files = d.correlated_files || [];
-  if (files.length > 0) h += '<div class="sec"><div class="sec-title">file access <span class="badge by">'+files.length+'</span></div>' + fileTable(files) + '</div>';
+  if (files.length > 0) h += '<div class="sec"><div class="sec-header"><span class="sec-title">file access</span><span class="badge by" style="margin-left:4px">'+files.length+'</span></div><div class="sec-body-tight">' + fileTable(files) + '</div></div>';
   const ptrace = d.correlated_ptrace || [];
-  if (ptrace.length > 0) h += '<div class="sec"><div class="sec-title">ptrace <span class="badge br">'+ptrace.length+'</span></div>' + ptraceTable(ptrace) + '</div>';
+  if (ptrace.length > 0) h += '<div class="sec"><div class="sec-header"><span class="sec-title">ptrace</span><span class="badge br" style="margin-left:4px">'+ptrace.length+'</span></div><div class="sec-body-tight">' + ptraceTable(ptrace) + '</div></div>';
 
-  h += '<div class="sec"><div class="sec-title">groovy call sites</div><div id="callsites"><div class="msg" style="text-align:left;padding:6px 0">loading…</div></div></div>';
+  h += '<div class="sec"><div class="sec-header"><span class="sec-title">groovy call sites</span></div><div class="sec-body"><div id="callsites"><div class="msg" style="text-align:left;padding:6px 0">loading&hellip;</div></div></div></div>';
 
   document.getElementById('app').innerHTML = h;
   if ((d.total_groovy_call_sites || 0) > 0) loadCallSites();
@@ -425,25 +838,25 @@ function groovyPanel(d) {
   let h = '';
   if (d.jenkinsfile_approved === true || d.jenkinsfile_approved === false) {
     const ok = d.jenkinsfile_approved === true;
-    h += '<div class="sec"><div class="sec-title">jenkinsfile analysis</div>';
-    h += `<div class="verdict ${ok?'ok':'bad'}">${ok?'✓ approved thin platform template':'✗ not an approved thin template'}</div>`;
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">jenkinsfile analysis</span></div><div class="sec-body">';
+    h += `<div class="verdict ${ok?'ok':'bad'}">${ok?'&#10003; approved thin platform template':'&#10007; not an approved thin template'}</div>`;
     const f = d.jenkinsfile_findings || [];
     if (f.length) h += '<ul class="findings">' + f.map(x=>`<li>${esc(x)}</li>`).join('') + '</ul>';
-    h += '</div>';
+    h += '</div></div>';
   }
   const den = d.groovy_denies || [];
   if (den.length) {
-    h += '<div class="sec"><div class="sec-title">blocked groovy <span class="badge br">'+den.length+'</span></div>';
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">blocked groovy</span><span class="badge br" style="margin-left:4px">'+den.length+'</span></div><div class="sec-body-tight">';
     h += '<table class="dtbl"><thead><tr><th>blocked signature</th><th>origin</th></tr></thead><tbody>';
     h += den.map(x=>`<tr class="bad"><td title="${esc(x.signature)}">${esc(x.signature)}</td><td class="dim">${esc(x.provenance||'')}</td></tr>`).join('');
-    h += '</tbody></table></div>';
+    h += '</tbody></table></div></div>';
   }
   const gw = d.syscall_call_sites || [];
   if (gw.length) {
-    h += '<div class="sec"><div class="sec-title">syscall gateways <span class="badge by">'+gw.length+'</span></div>';
+    h += '<div class="sec"><div class="sec-header"><span class="sec-title">syscall gateways</span><span class="badge by" style="margin-left:4px">'+gw.length+'</span></div><div class="sec-body-tight">';
     h += '<table class="dtbl"><thead><tr><th>syscall</th><th>call</th><th>origin</th><th>source</th></tr></thead><tbody>';
-    h += gw.map(x=>{const a=(x.args&&x.args.length)?'('+x.args.map(z=>esc(z)).join(', ')+')':'';return `<tr><td><span class="badge by">${esc(x.syscall)}</span></td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td class="dim">${esc(x.origin)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`;}).join('');
-    h += '</tbody></table></div>';
+    h += gw.map(x=>{const a=(x.args&&x.args.length)?'('+x.args.map(z=>esc(z)).join(', ')+')':'';return `<tr><td><span class="badge by no-dot">${esc(x.syscall)}</span></td><td title="${esc((x.target||'')+'.'+x.method)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td class="dim">${esc(x.origin)}</td><td class="dim" title="${esc(x.source)}">${esc(srcShort(x.source))}:${x.line}</td></tr>`;}).join('');
+    h += '</tbody></table></div></div>';
   }
   return h;
 }
@@ -453,7 +866,7 @@ function srcShort(p) { if (!p) return ''; const i = p.lastIndexOf('/'); return i
 async function loadCallSites() {
   const box = document.getElementById('callsites');
   if (!box) return;
-  box.innerHTML = '<div class="msg" style="text-align:left;padding:6px 0">loading…</div>';
+  box.innerHTML = '<div class="msg" style="text-align:left;padding:6px 0">loading&hellip;</div>';
   try {
     window._cs = await fetch(`/builds/${encodeURIComponent(window._bid)}/groovy`).then(r => r.json());
     window._csSyscallOnly = false;
@@ -470,9 +883,9 @@ function renderCallTree(calls) {
   function node(c) {
     const kids = byParent[c.id] || [];
     const a = (c.args&&c.args.length) ? '('+c.args.map(z=>esc(z)).join(', ')+')' : '';
-    const sc = c.syscall ? `<span class="badge by">${esc(c.syscall)}</span>` : '';
+    const sc = c.syscall ? `<span class="badge by no-dot">${esc(c.syscall)}</span>` : '';
     const hk = kids.length > 0;
-    let h = `<div class="ctnode"><div class="ctrow${c.syscall?' bad':''}" onclick="csToggle(this)"><span class="ctexp">${hk?'\u25b8':'\u00b7'}</span><span class="ctline">${c.line}</span><span class="ctcall" title="${esc((c.target||'')+'.'+c.method+a)}">${esc(c.target||'')}.${esc(c.method)}${a}</span> ${sc}</div>`;
+    let h = `<div class="ctnode"><div class="ctrow${c.syscall?' bad':''}" onclick="csToggle(this)"><span class="ctexp">${hk?'▸':'·'}</span><span class="ctline">${c.line}</span><span class="ctcall" title="${esc((c.target||'')+'.'+c.method+a)}">${esc(c.target||'')}.${esc(c.method)}${a}</span> ${sc}</div>`;
     if (hk) h += `<div class="ctkids">${kids.map(node).join('')}</div>`;
     return h + '</div>';
   }
@@ -488,12 +901,12 @@ function renderCallSites() {
     const calls = window._csSyscallOnly ? (c.calls||[]).filter(x=>x.syscall) : (c.calls||[]);
     if (window._csSyscallOnly && !calls.length) return;
     const gwBadge = c.syscallGateways > 0 ? `<span class="badge by">${c.syscallGateways} syscall</span>` : '';
-    const oBadge  = `<span class="badge ${c.origin==='library'?'bm':'bg'}">${esc(c.origin)}</span>`;
-    h += `<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">\u25b8</span> ${oBadge} <span class="csclass">${esc(c.clazz||'')}</span> <span class="cssrc">${esc(srcShort(c.source))}</span> <span class="cscount">${(c.calls||[]).length} calls</span> ${gwBadge}</div><div class="cscalls">`;
+    const oBadge  = `<span class="badge ${c.origin==='library'?'bm':'bg'} no-dot">${esc(c.origin)}</span>`;
+    h += `<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">▸</span> ${oBadge} <span class="csclass">${esc(c.clazz||'')}</span> <span class="cssrc">${esc(srcShort(c.source))}</span> <span class="cscount">${(c.calls||[]).length} calls</span> ${gwBadge}</div><div class="cscalls">`;
     if (window._csSyscallOnly) {
       h += '<table class="dtbl"><thead><tr><th>line</th><th>call</th><th>syscall</th></tr></thead><tbody>';
       calls.forEach(x => {
-        const sc = x.syscall ? `<span class="badge by">${esc(x.syscall)}</span>` : '';
+        const sc = x.syscall ? `<span class="badge by no-dot">${esc(x.syscall)}</span>` : '';
         const a = (x.args&&x.args.length) ? '('+x.args.map(z=>esc(z)).join(', ')+')' : '';
         h += `<tr class="bad"><td class="dim">${x.line}</td><td title="${esc((x.target||'')+'.'+x.method+a)}">${esc(x.target||'')}.${esc(x.method)}${a}</td><td>${sc}</td></tr>`;
       });
@@ -511,7 +924,7 @@ function renderTree(nodes, ec, hc, nc, root) {
   let h = '';
   for (const n of nodes) {
     const sel  = _filter === n.nodeId ? ' sel' : '';
-    const exp  = n.children?.length ? '▾' : '·';
+    const exp  = n.children?.length ? '&#9662;' : '&middot;';
     const fn   = n.functionName && n.functionName !== n.stepName
                  ? `<span class="fn">(${esc(n.functionName)})</span>` : '';
     const dur  = n.durationMs != null ? fmtDur(n.durationMs) : '';
@@ -535,19 +948,20 @@ function renderTree(nodes, ec, hc, nc, root) {
 
 function renderLogFacts(lf) {
   if (!lf) return '';
-  let h = '<div class="sec"><div class="sec-title">log facts' + (lf.result ? ` <span class="badge ${lf.result === 'SUCCESS' ? 'bg' : 'br'}">${esc(lf.result)}</span>` : '') + '</div><div class="prov">';
-  if ((lf.tool_versions || []).length) h += `<div class="provrow"><span class="provk">versions</span><span class="provv dim">${lf.tool_versions.map(esc).join('  ·  ')}</span></div>`;
+  const resultBadge = lf.result ? ` <span class="badge ${lf.result === 'SUCCESS' ? 'bg' : 'br'} no-dot">${esc(lf.result)}</span>` : '';
+  let h = '<div class="sec"><div class="sec-header"><span class="sec-title">log facts</span>' + resultBadge + '</div><div class="sec-body"><div class="prov">';
+  if ((lf.tool_versions || []).length) h += `<div class="provrow"><span class="provk">versions</span><span class="provv dim">${lf.tool_versions.map(esc).join('&ensp;&middot;&ensp;')}</span></div>`;
   (lf.scan_findings || []).forEach(x => h += `<div class="provrow"><span class="provk">scan</span><span class="provv">${esc(x)}</span></div>`);
   (lf.test_summary || []).forEach(x => h += `<div class="provrow"><span class="provk">test</span><span class="provv">${esc(x)}</span></div>`);
   if (lf.warning_count) h += `<div class="provrow"><span class="provk">warnings</span><span class="provv">${lf.warning_count}</span></div>`;
   (lf.errors || []).slice(0, 15).forEach(x => h += `<div class="provrow bad"><span class="provk">error</span><span class="provv">${esc(x)}</span></div>`);
-  h += `<div class="provrow"><span class="provk">log</span><span class="provv"><span class="loadcs" onclick="loadLog()">view raw${lf.lines ? ' (' + lf.lines + ' lines)' : ''} ▸</span></span></div>`;
-  h += '</div><div id="rawlog"></div></div>';
+  h += `<div class="provrow"><span class="provk">log</span><span class="provv"><span class="loadcs" onclick="loadLog()">view raw${lf.lines ? ' (' + lf.lines + ' lines)' : ''} &#9654;</span></span></div>`;
+  h += '</div><div id="rawlog"></div></div></div>';
   return h;
 }
 async function loadLog() {
   const box = document.getElementById('rawlog'); if (!box) return;
-  box.innerHTML = '<div class="msg">loading…</div>';
+  box.innerHTML = '<div class="msg">loading&hellip;</div>';
   try {
     const t = await fetch(`/builds/${encodeURIComponent(window._bid)}/log`).then(r => { if (!r.ok) throw new Error('no log'); return r.text(); });
     box.innerHTML = `<pre class="rawlog">${esc(t)}</pre>`;
@@ -555,35 +969,35 @@ async function loadLog() {
 }
 function renderActivity(a) {
   if (!a) return '';
-  let h = '<div class="sec"><div class="sec-title">build provenance</div><div class="prov">';
+  let h = '<div class="sec"><div class="sec-header"><span class="sec-title">build provenance</span></div><div class="sec-body"><div class="prov">';
   if (a.source) h += `<div class="provrow"><span class="provk">source</span><span class="provv">${esc(a.source.repo||'?')}${a.source.commit?(' @ '+esc(a.source.commit.substring(0,12))):''}</span></div>`;
   (a.images||[]).forEach(im=>{
-    const dg = im.digest?(' '+esc(im.digest.substring(0,19))+'…'):'';
-    const df = im.dockerfile?(' · '+esc(im.dockerfile)):'';
+    const dg = im.digest?(' '+esc(im.digest.substring(0,19))+'&hellip;'):'';
+    const df = im.dockerfile?(' &middot; '+esc(im.dockerfile)):'';
     h += `<div class="provrow"><span class="provk">image</span><span class="provv">${esc(im.ref||'(built)')}${dg} <span class="dim">via ${esc(im.built_by||'?')}${df}</span></span></div>`;
   });
   (a.signatures||[]).forEach(sg=>{
-    h += `<div class="provrow"><span class="provk">sign</span><span class="provv">${esc(sg.type)} <span class="dim">${esc((sg.image||'').replace(/@sha256:.*/,''))} · ${sg.tlog?'tlog':'no-tlog'}</span></span></div>`;
+    h += `<div class="provrow"><span class="provk">sign</span><span class="provv">${esc(sg.type)} <span class="dim">${esc((sg.image||'').replace(/@sha256:.*/,''))} &middot; ${sg.tlog?'tlog':'no-tlog'}</span></span></div>`;
   });
   (a.registry_ops||[]).filter(o=>o.op==='push').forEach(o=>{
-    h += `<div class="provrow"><span class="provk">push</span><span class="provv">${esc(o.registry)}/${esc(o.repo)}${o.ref?(' '+esc(o.ref.substring(0,19))+'…'):''}</span></div>`;
+    h += `<div class="provrow"><span class="provk">push</span><span class="provv">${esc(o.registry)}/${esc(o.repo)}${o.ref?(' '+esc(o.ref.substring(0,19))+'&hellip;'):''}</span></div>`;
   });
   if ((a.scans||[]).length) h += `<div class="provrow"><span class="provk">scan</span><span class="provv">${[...new Set(a.scans.map(x=>x.tool))].map(esc).join(', ')}</span></div>`;
-  if (a.tools) { const t=Object.entries(a.tools).map(([k,v])=>`<b>${esc(k)}</b>:${v.map(esc).join(',')}`).join('  ·  '); h += `<div class="provrow"><span class="provk">tools</span><span class="provv dim">${t}</span></div>`; }
-  (a.secrets_exposed||[]).forEach(se=>{ h += `<div class="provrow bad"><span class="provk">⚠ secret</span><span class="provv">${esc(se.kind)} in ${esc(se.where)} args <span class="dim">${esc(se.step||'')}</span></span></div>`; });
-  if ((a.digests||[]).length) h += `<div class="provrow"><span class="provk">digests</span><span class="provv dim">${a.digests.length} distinct sha256 (${esc((a.digests[0]||'').substring(0,19))}…)</span></div>`;
-  h += '</div></div>';
+  if (a.tools) { const t=Object.entries(a.tools).map(([k,v])=>`<b>${esc(k)}</b>:${v.map(esc).join(',')}`).join('&ensp;&middot;&ensp;'); h += `<div class="provrow"><span class="provk">tools</span><span class="provv dim">${t}</span></div>`; }
+  (a.secrets_exposed||[]).forEach(se=>{ h += `<div class="provrow bad"><span class="provk">&#9888; secret</span><span class="provv">${esc(se.kind)} in ${esc(se.where)} args <span class="dim">${esc(se.step||'')}</span></span></div>`; });
+  if ((a.digests||[]).length) h += `<div class="provrow"><span class="provk">digests</span><span class="provv dim">${a.digests.length} distinct sha256 (${esc((a.digests[0]||'').substring(0,19))}&hellip;)</span></div>`;
+  h += '</div></div></div>';
   return h;
 }
 function execTree(rows) {
-  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:12px 16px">no exec events</div>';
   const groups={}, order=[];
   for (const e of rows) {
     const k=(e.matched_step&&e.matched_step.nodeId)||'_out';
     if(!groups[k]){groups[k]={name:(e.matched_step&&e.matched_step.stepName)||'⚠ outside steps',rows:[]};order.push(k);}
     groups[k].rows.push(e);
   }
-  let h='';
+  let h='<div style="padding:8px 10px">';
   for(const k of order){
     const g=groups[k];
     const byPid={}; g.rows.forEach(e=>byPid[e.tetragon_event.pid]=e);
@@ -597,13 +1011,13 @@ function execTree(rows) {
       const bin=(te.binary||'').split('/').pop();
       const args=te.args?` <span class="dim">${esc((te.args||'').substring(0,100))}</span>`:'';
       const cls=e.anomaly?' bad':(e.unexpected_binary?' warn':'');
-      let sx=`<div class="ctnode"><div class="ctrow${cls}" onclick="csToggle(this)"><span class="ctexp">${ch.length?'▸':'·'}</span><span class="ctcall" title="${esc(te.binary)} ${esc(te.args||'')}">${esc(bin)}${args}</span><span class="dim">${pid}</span></div>`;
+      let sx=`<div class="ctnode"><div class="ctrow${cls}" onclick="csToggle(this)"><span class="ctexp">${ch.length?'▸':'·'}</span><span class="ctcall" title="${esc(te.binary)} ${esc(te.args||'')}">${esc(bin)}${args}</span><span class="dim" style="font-size:10px;margin-left:auto">${pid}</span></div>`;
       if(ch.length)sx+=`<div class="ctkids">${ch.map(c=>node(c,na)).join('')}</div>`;
       return sx+'</div>';
     };
     h+=`<div class="csgrp"><div class="cshead" onclick="this.nextElementSibling.classList.toggle('open')"><span class="csexp">▸</span> <span class="csclass">${esc(g.name)}</span> <span class="cscount">${g.rows.length} procs</span></div><div class="cscalls">${roots.map(e=>node(e,new Set())).join('')}</div></div>`;
   }
-  return h;
+  return h + '</div>';
 }
 function execTable(rows) {
   if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no exec events</div>';
@@ -628,7 +1042,7 @@ function execTable(rows) {
 }
 
 function httpTable(rows) {
-  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no http events</div>';
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 16px">no http events</div>';
   let h = `<table class="dtbl"><thead><tr>
     <th>method</th><th>url</th><th>status</th><th>size</th><th>sha256</th><th>step</th><th>time</th>
   </tr></thead><tbody>`;
@@ -639,7 +1053,7 @@ function httpTable(rows) {
     const stat = he.blocked ? '403 BLOCKED' : he.status;
     const step = e.matched_step?.stepName || '—';
     h += `<tr${cls}>
-      <td>${esc(he.method)}</td>
+      <td style="font-weight:600">${esc(he.method)}</td>
       <td class="url" title="${esc(he.url)}">${esc((he.url||'').substring(0,90))}</td>
       <td class="${scls}">${stat}</td>
       <td class="dim">${he.size ? fmtSize(he.size) : '—'}</td>
@@ -670,7 +1084,7 @@ function ptraceTable(rows) {
 }
 
 function networkTable(rows) {
-  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 0">no tcp connect events</div>';
+  if (!rows.length) return '<div class="msg" style="text-align:left;padding:8px 16px">no tcp connect events</div>';
   let h = `<table class="dtbl"><thead><tr>
     <th>dest</th><th>pid</th><th>step</th><th>time</th>
   </tr></thead><tbody>`;

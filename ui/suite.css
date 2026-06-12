@@ -1,0 +1,154 @@
+/* Platform Suite canonical design system. SOURCE OF TRUTH - keep audit/attest copies byte-identical; platform-agent globals.css mirrors the :root tokens. */
+
+/* ============================================================
+   DESIGN TOKENS
+   Canonical values shared across the Platform Suite. Two naming
+   conventions are exposed as aliases of the same value so each
+   app's existing component CSS keeps resolving:
+     - audit-service style:  --bg/--bg2/--bg3/--bg4, --blue, --font ...
+     - attest-coordinator style: --base/--surface/--raised, --accent, --ui ...
+   ============================================================ */
+:root {
+  /* Backgrounds (layered depth) */
+  --bg:        #0b0e14;
+  --bg2:       #11151d;
+  --bg3:       #171c26;
+  --bg4:       #1d2433;
+  --base:      #0b0e14;
+  --surface:   #11151d;
+  --raised:    #171c26;
+  --overlay:   #1d2433;
+
+  /* Borders */
+  --border:    #222a37;
+  --border2:   #2d3748;
+  --border-hi: #2d3748;
+
+  /* Text */
+  --text:      #e6edf3;
+  --muted:     #8b97a8;
+  --dimmer:    #566170;
+  --faint:     #4a5568;
+
+  /* Accent */
+  --blue:      #5b8cff;
+  --accent:    #5b8cff;
+  --accent-hover: #7aa3ff;
+  --blue-dim:  #3a5fa0;
+  --accent-dim:rgba(91,140,255,.12);
+  --blue-bg:   rgba(91,140,255,.1);
+
+  /* Semantic states */
+  --green:     #3fb950;
+  --green-bg:  rgba(63,185,80,.12);
+  --red:       #f85149;
+  --red-bg:    rgba(248,81,73,.12);
+  --yellow:    #d29922;
+  --yellow-bg: rgba(210,153,34,.12);
+
+  /* Typography */
+  --font:      'Inter','Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --ui:        'Inter','Segoe UI',system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  --mono:      ui-monospace,'JetBrains Mono','SF Mono','Fira Code','Cascadia Code','Consolas',Menlo,monospace;
+
+  /* Elevation */
+  --shadow:    0 1px 3px rgba(0,0,0,.5), 0 4px 16px rgba(0,0,0,.35);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.4);
+
+  /* Radii */
+  --radius:    10px;
+  --radius-sm: 6px;
+}
+
+/* ============================================================
+   BASE / RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ============================================================
+   FOCUS VISIBLE - 2px accent ring
+   ============================================================ */
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* ============================================================
+   SCROLLBAR - slim dark style (webkit)
+   ============================================================ */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4a5e; }
+
+/* ============================================================
+   SUITE HEADER - canonical brand identity block.
+   These suite-* classes are NOT coupled to any app JavaScript.
+   Functional header controls (#back, #breadcrumb, #patbtn,
+   refresh dot, nav) stay defined in each app's own stylesheet.
+   ============================================================ */
+.suite-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 var(--border), 0 2px 12px rgba(0,0,0,.4);
+  padding: 0 24px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.suite-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.suite-mark {
+  width: 22px;
+  height: 22px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.suite-mark svg { display: block; }
+.suite-wordmark {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+.suite-wordmark .accent { color: var(--accent); }
+.suite-tag {
+  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--mono);
+  margin-left: 2px;
+  white-space: nowrap;
+}
+.suite-header-divider {
+  width: 1px;
+  height: 48px;
+  background: var(--border);
+  margin: 0 16px;
+  flex-shrink: 0;
+}
