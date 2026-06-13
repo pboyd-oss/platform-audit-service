@@ -732,6 +732,11 @@ type stepEvent struct {
 	JenkinsfileApproved *bool           `json:"jenkinsfileApproved,omitempty"`
 	Findings            []string        `json:"findings,omitempty"`
 	Calls               []callSite      `json:"calls,omitempty"`
+	// LIBRARY_LOADED event fields (emitted once per loaded library from LibrariesAction).
+	Library      string   `json:"library,omitempty"`
+	Trusted      bool     `json:"trusted,omitempty"`
+	LoadedDigest string   `json:"loadedDigest,omitempty"`
+	Vars         []string `json:"vars,omitempty"`
 }
 
 type stepNode struct {
@@ -1262,9 +1267,22 @@ func correlate(auditId string, wait bool) {
 	syscallSites := []syscallSite{}
 	runtimeCalls := []runtimeCall{}
 	groovyRuntimeCalls := 0
+	// Library entry-point detection: LIBRARY_LOADED events carry each loaded library's real
+	// loadedDigest + the vars/ it provides; the call-site recorder's call methods are matched
+	// against those vars to detect library GLOBAL VAR calls (microservicePipeline/buildApp/...)
+	// that never produce a library-classloader step descriptor.
+	type libInfo struct {
+		digest  string
+		trusted bool
+		vars    []string
+	}
+	libLoaded := map[string]libInfo{}
+	callMethods := map[string]struct{}{}
 	filtered := steps[:0]
 	for _, s := range steps {
 		switch s.Event {
+		case "LIBRARY_LOADED":
+			libLoaded[s.Library] = libInfo{digest: s.LoadedDigest, trusted: s.Trusted, vars: s.Vars}
 		case "GROOVY_CALL":
 			groovyCalls++
 		case "GROOVY_DENY":
@@ -1277,6 +1295,9 @@ func correlate(auditId string, wait bool) {
 			groovyCallSites += s.CallCount
 			syscallGateways += s.SyscallGateways
 			for _, c := range s.Calls {
+				if c.Method != "" {
+					callMethods[c.Method] = struct{}{}
+				}
 				if c.Syscall != "" {
 					// A syscall-reaching call site from non-library (team/unattributed) origin
 					// is custom code touching a kernel gateway — fail-closed signal for strict.
@@ -1331,6 +1352,30 @@ func correlate(auditId string, wait bool) {
 			// itself proven library code. 'unattributed' counts as custom (Source != "library").
 			if s.CalledFrom == nil && (s.LibrarySource == nil || s.LibrarySource.Source != "library") {
 				customStepCount++
+			}
+		}
+	}
+
+	// Library entry-point attribution (the leg the classloader-on-step-descriptor check
+	// misses): for each TRUSTED loaded library, record its real loaded-code digest, and for
+	// every vars/ entry point that the call-site recorder observed being CALLED, record
+	// "<library>::<var>". This is what makes microservicePipeline/buildApp/runTests show up in
+	// called_library_steps even though they are global-var calls, not library step descriptors.
+	for lib, info := range libLoaded {
+		if !info.trusted {
+			continue
+		}
+		if info.digest != "" {
+			libraryDigests[lib] = info.digest
+		}
+		for _, v := range info.vars {
+			if _, called := callMethods[v]; !called {
+				continue
+			}
+			key := lib + "::" + v
+			if _, seen := calledLibSet[key]; !seen {
+				calledLibSet[key] = struct{}{}
+				calledLibrarySteps = append(calledLibrarySteps, key)
 			}
 		}
 	}
