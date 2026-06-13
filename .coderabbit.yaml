@@ -70,6 +70,7 @@ reviews:
       instructions: >-
         Pin base images, prefer the Harbor mirror for external pulls, run as
         non-root, no secrets baked into layers.
+  auto_apply_labels: true
   labeling_instructions:
     - label: "type/feature"
       instructions: "Apply when the PR adds new functionality or a user-facing capability."
