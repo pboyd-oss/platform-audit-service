@@ -737,6 +737,11 @@ type stepEvent struct {
 	Trusted      bool     `json:"trusted,omitempty"`
 	LoadedDigest string   `json:"loadedDigest,omitempty"`
 	Vars         []string `json:"vars,omitempty"`
+	// Intra-library call graph (var -> [other vars it calls]) parsed by the listener from THIS
+	// build's loaded source. Lets called_library_steps resolve a declarative library var's
+	// INTERNAL calls (microservicePipeline -> runTests/buildAndPushImage/...) which never
+	// surface as call sites. Per-build, from the digest-pinned source -> never stale.
+	CallGraph map[string][]string `json:"callGraph,omitempty"`
 	// GROOVY_LIBCALL: raw call-method names from a CONVERSION-phase scan (pre declarative
 	// transform), used only to match library entry-point calls for called_library_steps.
 	Methods []string `json:"methods,omitempty"`
@@ -856,6 +861,7 @@ type correlationReport struct {
 	TotalGroovyRuntimeCalls int    `json:"total_groovy_runtime_calls"`
 	// Independent classloader-provenance attribution (computed from raw events, not the shim).
 	CalledLibrarySteps     []string            `json:"called_library_steps,omitempty"`
+	LibraryStepsDerived    []string            `json:"library_steps_derived,omitempty"`
 	CustomStepCount        int                 `json:"custom_step_count"`
 	LibraryDigests         map[string]string   `json:"library_digests,omitempty"`
 	JenkinsfileApproved    *bool               `json:"jenkinsfile_approved,omitempty"`
@@ -1275,9 +1281,10 @@ func correlate(auditId string, wait bool) {
 	// against those vars to detect library GLOBAL VAR calls (microservicePipeline/buildApp/...)
 	// that never produce a library-classloader step descriptor.
 	type libInfo struct {
-		digest  string
-		trusted bool
-		vars    []string
+		digest    string
+		trusted   bool
+		vars      []string
+		callGraph map[string][]string
 	}
 	libLoaded := map[string]libInfo{}
 	callMethods := map[string]struct{}{}
@@ -1285,7 +1292,7 @@ func correlate(auditId string, wait bool) {
 	for _, s := range steps {
 		switch s.Event {
 		case "LIBRARY_LOADED":
-			libLoaded[s.Library] = libInfo{digest: s.LoadedDigest, trusted: s.Trusted, vars: s.Vars}
+			libLoaded[s.Library] = libInfo{digest: s.LoadedDigest, trusted: s.Trusted, vars: s.Vars, callGraph: s.CallGraph}
 		case "GROOVY_LIBCALL":
 			// Raw call-method names captured pre-transform (catches declarative library vars'
 			// internal calls that the SEMANTIC_ANALYSIS pass misses). Feeds only the library
@@ -1343,6 +1350,7 @@ func correlate(auditId string, wait bool) {
 	// the numbers the Cedar gate keys on come from the independent witness, not the build.
 	calledLibSet := map[string]struct{}{}
 	calledLibrarySteps := []string{}
+	libraryStepsDerived := []string{} // subset of calledLibrarySteps added via static call-graph closure
 	customStepCount := 0
 	libraryDigests := map[string]string{} // library -> real loaded-code digest (independent of declared version)
 	for i := range steps {
@@ -1388,6 +1396,53 @@ func correlate(auditId string, wait bool) {
 			if _, seen := calledLibSet[key]; !seen {
 				calledLibSet[key] = struct{}{}
 				calledLibrarySteps = append(calledLibrarySteps, key)
+			}
+		}
+	}
+
+	// Transitive call-graph expansion (the declarative-library-var leg): a trusted library
+	// entry point like microservicePipeline is observed as a call site, but its INTERNAL calls
+	// (runTests, buildAndPushImage, platformSign, ...) are relocated by the declarative pipeline
+	// transform and never produce a call site. The listener parsed THIS build's loaded source
+	// into an intra-library call graph (LIBRARY_LOADED.callGraph); walk it transitively from
+	// each runtime-observed entry-point var and add the reachable vars to called_library_steps.
+	// Sound because the library is digest-pinned (library-integrity gate): the pinned source's
+	// static call graph is exactly what ran (config flags only remove calls, never add untrusted
+	// ones to a trusted file). Tracked separately in library_steps_derived for auditability.
+	for lib, info := range libLoaded {
+		if !info.trusted || len(info.callGraph) == 0 {
+			continue
+		}
+		varSet := map[string]struct{}{}
+		for _, v := range info.vars {
+			varSet[v] = struct{}{}
+		}
+		// Seed from entry-point vars already observed as called for this library.
+		queue := []string{}
+		for _, v := range info.vars {
+			if _, seen := calledLibSet[lib+"::"+v]; seen {
+				queue = append(queue, v)
+			}
+		}
+		visited := map[string]struct{}{}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			if _, done := visited[cur]; done {
+				continue
+			}
+			visited[cur] = struct{}{}
+			for _, callee := range info.callGraph[cur] {
+				if _, isVar := varSet[callee]; !isVar {
+					continue // only attribute calls to real vars/ entry points of this trusted lib
+				}
+				queue = append(queue, callee)
+				key := lib + "::" + callee
+				if _, seen := calledLibSet[key]; !seen {
+					calledLibSet[key] = struct{}{}
+					calledLibrarySteps = append(calledLibrarySteps, key)
+					libraryStepsDerived = append(libraryStepsDerived, key)
+				}
 			}
 		}
 	}
@@ -1660,6 +1715,7 @@ func correlate(auditId string, wait bool) {
 		CustomSyscallSiteCount:  customSyscallSites,
 		TotalGroovyRuntimeCalls: groovyRuntimeCalls,
 		CalledLibrarySteps:      calledLibrarySteps,
+		LibraryStepsDerived:     libraryStepsDerived,
 		CustomStepCount:         customStepCount,
 		LibraryDigests:          libraryDigests,
 		JenkinsfileApproved:     jenkinsfileApproved,
