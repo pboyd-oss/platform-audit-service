@@ -737,6 +737,9 @@ type stepEvent struct {
 	Trusted      bool     `json:"trusted,omitempty"`
 	LoadedDigest string   `json:"loadedDigest,omitempty"`
 	Vars         []string `json:"vars,omitempty"`
+	// GROOVY_LIBCALL: raw call-method names from a CONVERSION-phase scan (pre declarative
+	// transform), used only to match library entry-point calls for called_library_steps.
+	Methods []string `json:"methods,omitempty"`
 }
 
 type stepNode struct {
@@ -1283,6 +1286,15 @@ func correlate(auditId string, wait bool) {
 		switch s.Event {
 		case "LIBRARY_LOADED":
 			libLoaded[s.Library] = libInfo{digest: s.LoadedDigest, trusted: s.Trusted, vars: s.Vars}
+		case "GROOVY_LIBCALL":
+			// Raw call-method names captured pre-transform (catches declarative library vars'
+			// internal calls that the SEMANTIC_ANALYSIS pass misses). Feeds only the library
+			// entry-point match for called_library_steps, not the syscall/custom-step counts.
+			for _, m := range s.Methods {
+				if m != "" {
+					callMethods[m] = struct{}{}
+				}
+			}
 		case "GROOVY_CALL":
 			groovyCalls++
 		case "GROOVY_DENY":
