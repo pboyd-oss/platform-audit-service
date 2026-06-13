@@ -70,7 +70,25 @@ reviews:
       instructions: >-
         Pin base images, prefer the Harbor mirror for external pulls, run as
         non-root, no secrets baked into layers.
-  labeling_instructions: []
+  labeling_instructions:
+    - label: "type/feature"
+      instructions: "Apply when the PR adds new functionality or a user-facing capability."
+    - label: "type/fix"
+      instructions: "Apply when the PR fixes a bug or incorrect behavior."
+    - label: "type/docs"
+      instructions: "Apply when the PR only changes documentation, comments, or markdown."
+    - label: "type/refactor"
+      instructions: "Apply when the PR restructures code without changing external behavior."
+    - label: "type/test"
+      instructions: "Apply when the PR only adds or modifies tests."
+    - label: "type/chore"
+      instructions: "Apply for build, CI, dependency, or tooling changes with no application-logic change."
+    - label: "type/perf"
+      instructions: "Apply when the PR's primary purpose is a performance improvement."
+    - label: "type/security"
+      instructions: "Apply when the PR touches auth, secrets, crypto, IAM, input validation, or fixes a vulnerability."
+    - label: "breaking-change"
+      instructions: "Apply when the PR introduces a backward-incompatible API, schema, config, or CLI change."
 
 chat:
   auto_reply: true
