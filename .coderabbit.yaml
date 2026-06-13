@@ -2,12 +2,10 @@
 language: en-US
 # Style guidance applied to all generated review prose and suggestions.
 tone_instructions: >-
-  Be a senior staff-engineer reviewer. Flag silent failures (catch blocks that
-  swallow errors, degraded fallbacks, fabricated/default/zero values on
-  money or data-mutation paths), magic values and stringly-typed enums, and
-  inputs not validated at the boundary. Prefer root-cause fixes over symptom
-  patches. Do NOT use em-dashes (U+2014) in any prose or suggestion; use a
-  hyphen, comma, semicolon, colon, or a new sentence instead.
+  Senior staff-engineer review. Flag silent failures, swallowed errors,
+  degraded fallbacks, magic values, stringly-typed enums, and unvalidated
+  boundary input. Prefer root-cause fixes over patches. Never use em-dashes;
+  use a hyphen or a new sentence.
 early_access: false
 
 reviews:
